@@ -1,0 +1,62 @@
+:root {
+    --navbar-height: 74px;
+    --collapsed-navbar-height: 150px; /* New variable for collapsed navbar height */
+  }
+
+#logo{
+    margin-left: 1rem;
+    margin-right: 1rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    height: 2rem;
+    width: 2rem;
+}
+.navbar{
+    position: sticky;
+    justify-content: space-between;
+    min-width: 270px;
+}
+
+.btn-outline-dark{
+    background-color: #D8737F;
+    color : #ffffff;
+    margin-right: 10px;
+}
+
+.btn-outline-dark:hover{
+    background-color: #000000;
+    color : #fff;
+}
+
+.navbar-dark .navbar-nav{
+    text-align: center;
+}
+
+.navbar-dark .navbar-nav .nav-link {
+    color: #fff; /* change color of navbar links */
+}
+
+.navbar-dark .navbar-nav .nav-link:hover {
+    color: #D8737F; /* change color of navbar links when hovering */
+}
+
+.sign-button{
+    display: contents;
+}
+
+.left-nav{
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.right-nav{
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.nav-link{
+    margin-left: 1rem;
+    margin-right: 1rem;
+}
