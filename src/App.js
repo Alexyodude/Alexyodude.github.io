@@ -9,7 +9,6 @@ import Navbar  from './Navbar/Navbar.jsx';
 import AboutMe from './Pages/About-Me';
 import Materials from './Pages/Materials';
 
-
 function App() {
   return (
     <div className="App">
