@@ -1,0 +1,16 @@
+.OuterContainer{
+    width: 100vw;
+    background-color: #70d4a0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.Container{
+    display: flex;
+    width: 80vw;
+    background-color: #59c38c;
+    text-align:left;
+    border-radius: 2em;
+    padding: 1em;
+    flex-direction: column;
+}

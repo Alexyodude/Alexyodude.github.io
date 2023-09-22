@@ -8,6 +8,7 @@ import Navbar  from './Navbar/Navbar.jsx';
 
 import AboutMe from './Pages/About-Me';
 import Materials from './Pages/Materials';
+import WikiPage from './Pages/WikiPage';
 
 function App() {
   return (
@@ -17,6 +18,8 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/About-Me" element={<AboutMe />} />
         <Route path="/Materials" element={<Materials />} />
+        <Route path="/WikiPage" element={<WikiPage />} />
+        <Route path="*" element={<h1>404 Not Found</h1>} />
       </Routes>
     </div>
   );
