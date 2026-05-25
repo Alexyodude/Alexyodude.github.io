@@ -1,0 +1,30 @@
+[
+  {
+    "title": "Project 1",
+    "description": "Placeholder description for the first featured project.",
+    "repo": "https://github.com/Alexyodude",
+    "demo": null,
+    "tags": ["TypeScript"]
+  },
+  {
+    "title": "Project 2",
+    "description": "Placeholder description for the second featured project.",
+    "repo": "https://github.com/Alexyodude",
+    "demo": null,
+    "tags": ["Python"]
+  },
+  {
+    "title": "Project 3",
+    "description": "Placeholder description for the third featured project.",
+    "repo": "https://github.com/Alexyodude",
+    "demo": null,
+    "tags": ["Rust"]
+  },
+  {
+    "title": "Project 4",
+    "description": "Placeholder description for the fourth featured project.",
+    "repo": "https://github.com/Alexyodude",
+    "demo": null,
+    "tags": ["C++"]
+  }
+]
