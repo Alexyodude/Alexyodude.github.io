@@ -8,7 +8,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
-    "cloudflare:dns": "node scripts/cloudflare-dns.mjs"
+    "cloudflare:dns": "node --env-file=.env scripts/cloudflare-dns.mjs"
   },
   "dependencies": {
     "astro": "^5.0.0",
