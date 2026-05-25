@@ -1,0 +1,30 @@
+---
+import { fetchRepos } from '../lib/github';
+
+const repos = await fetchRepos();
+---
+
+<section class="px-6 py-16 max-w-3xl mx-auto">
+  <h2 class="text-sm uppercase tracking-widest text-muted">All Projects</h2>
+  <ul class="mt-6 grid gap-3 md:grid-cols-2">
+    {repos.map((r) => (
+      <li>
+        <a
+          href={r.htmlUrl}
+          class="block border border-border rounded-md px-4 py-3 hover:border-accent transition-colors"
+        >
+          <div class="flex items-baseline justify-between gap-2">
+            <span class="font-medium">{r.name}</span>
+            <span class="text-xs text-muted">★ {r.stars}</span>
+          </div>
+          {r.description && (
+            <p class="mt-1 text-sm text-muted line-clamp-2">{r.description}</p>
+          )}
+          {r.language && (
+            <p class="mt-2 text-xs text-muted">{r.language}</p>
+          )}
+        </a>
+      </li>
+    ))}
+  </ul>
+</section>
