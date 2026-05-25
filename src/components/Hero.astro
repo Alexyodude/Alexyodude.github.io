@@ -1,0 +1,24 @@
+---
+const name = 'Alex';
+const bio = 'Software engineer building things.';
+const socials = [
+  { label: 'GitHub', href: 'https://github.com/Alexyodude' },
+  { label: 'LinkedIn', href: '#' },
+  { label: 'X', href: '#' },
+  { label: 'Email', href: 'mailto:hello@alexyodude.com' },
+];
+---
+
+<section class="px-6 py-24 md:py-32 max-w-3xl mx-auto">
+  <h1 class="text-5xl md:text-7xl font-bold tracking-tight">{name}</h1>
+  <p class="mt-6 text-xl md:text-2xl text-muted">{bio}</p>
+  <ul class="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+    {socials.map((s) => (
+      <li>
+        <a href={s.href} class="underline decoration-muted underline-offset-4 hover:text-accent hover:decoration-accent">
+          {s.label}
+        </a>
+      </li>
+    ))}
+  </ul>
+</section>
