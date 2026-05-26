@@ -75,7 +75,8 @@ const items: Item[] = [
 </style>
 
 <script is:inline>
-  function __sideMenuInit() {
+(function () {
+  function init() {
     const links = Array.from(document.querySelectorAll('.side-menu-link'));
     if (!links.length) return;
     const map = new Map();
@@ -180,8 +181,9 @@ const items: Item[] = [
     });
   }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', __sideMenuInit);
+    document.addEventListener('DOMContentLoaded', init);
   } else {
-    __sideMenuInit();
+    init();
   }
+})();
 </script>
