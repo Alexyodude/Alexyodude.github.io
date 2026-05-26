@@ -1,10 +1,10 @@
 [
   {
-    "title": "Project 1",
-    "description": "Placeholder description for the first featured project.",
-    "repo": "https://github.com/Alexyodude",
-    "demo": null,
-    "tags": ["TypeScript"]
+    "title": "OpenGL Sandbox",
+    "description": "C++ pixel sandbox with Conway's Game of Life, gravity, heat sims, and WASD player movement. Built from scratch pre-AI in raw OpenGL 3.3 + GLFW + ImGui. Web port via Claude in progress; Windows download below.",
+    "repo": "https://github.com/Alexyodude/OpenGL",
+    "demo": "/games/OpenGL.exe",
+    "tags": ["C++", "OpenGL", "GLFW", "ImGui"]
   },
   {
     "title": "Project 2",

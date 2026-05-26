@@ -1,0 +1,32 @@
+---
+import art from '../content/art.json';
+
+type Piece = {
+  title: string;
+  image: string;
+  caption: string;
+};
+
+const pieces = art as Piece[];
+---
+
+<section class="px-6 py-16 max-w-3xl mx-auto">
+  <h2 class="text-sm uppercase tracking-widest text-muted">Art</h2>
+  <ul class="mt-6 grid gap-4 grid-cols-2 md:grid-cols-3">
+    {pieces.map((p) => (
+      <li class="group">
+        <a href={p.image} target="_blank" rel="noopener" class="block">
+          <div class="aspect-square overflow-hidden rounded-lg border border-border bg-border/30">
+            <img
+              src={p.image}
+              alt={p.title}
+              loading="lazy"
+              class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            />
+          </div>
+          <p class="mt-2 text-xs text-muted">{p.caption}</p>
+        </a>
+      </li>
+    ))}
+  </ul>
+</section>

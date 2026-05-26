@@ -1,0 +1,22 @@
+[
+  {
+    "title": "Placeholder 1",
+    "image": "/art/placeholder-1.svg",
+    "caption": "Replace with your own work."
+  },
+  {
+    "title": "Placeholder 2",
+    "image": "/art/placeholder-2.svg",
+    "caption": "Drop images in public/art/ and edit src/content/art.json."
+  },
+  {
+    "title": "Placeholder 3",
+    "image": "/art/placeholder-3.svg",
+    "caption": "Sketch, render, photo — anything visual."
+  },
+  {
+    "title": "Placeholder 4",
+    "image": "/art/placeholder-4.svg",
+    "caption": "Click expands to full size."
+  }
+]
