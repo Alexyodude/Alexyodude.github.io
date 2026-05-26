@@ -1,22 +1,23 @@
 [
   {
-    "title": "Placeholder 1",
-    "image": "/art/placeholder-1.svg",
-    "caption": "Replace with your own work."
+    "year": "2017-2018",
+    "categories": [
+      { "name": "Cubism deconstruction", "slug": "cubism-deconstruction", "pieces": [] },
+      { "name": "Past, Present, Future", "slug": "past-present-future", "pieces": [] },
+      { "name": "Children's book", "slug": "childrens-book", "pieces": [] },
+      { "name": "Landscape", "slug": "landscape", "pieces": [] },
+      { "name": "Time", "slug": "time", "pieces": [] }
+    ]
   },
   {
-    "title": "Placeholder 2",
-    "image": "/art/placeholder-2.svg",
-    "caption": "Drop images in public/art/ and edit src/content/art.json."
-  },
-  {
-    "title": "Placeholder 3",
-    "image": "/art/placeholder-3.svg",
-    "caption": "Sketch, render, photo — anything visual."
-  },
-  {
-    "title": "Placeholder 4",
-    "image": "/art/placeholder-4.svg",
-    "caption": "Click expands to full size."
+    "year": "2018-2019",
+    "categories": [
+      { "name": "Pencil", "slug": "pencil", "pieces": [] },
+      { "name": "Self Portrait", "slug": "self-portrait", "pieces": [] },
+      { "name": "Meaning", "slug": "meaning", "pieces": [] },
+      { "name": "Marker and Pen", "slug": "marker-and-pen", "pieces": [] },
+      { "name": "Human progress", "slug": "human-progress", "pieces": [] },
+      { "name": "Figure drawings", "slug": "figure-drawings", "pieces": [] }
+    ]
   }
 ]
