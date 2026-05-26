@@ -7,11 +7,11 @@
     "tags": ["C++", "OpenGL", "GLFW", "ImGui"]
   },
   {
-    "title": "Project 2",
-    "description": "Placeholder description for the second featured project.",
-    "repo": "https://github.com/Alexyodude",
-    "demo": null,
-    "tags": ["Python"]
+    "title": "mutual™",
+    "description": "Camera hardware that cryptographically signs video at the moment of capture — before any software can touch it. If a single frame is altered, the signature breaks. Proof of authenticity for forensics, insurance, and legal evidence.",
+    "repo": "https://github.com/mutual-solutions",
+    "demo": "https://mutual.solutions",
+    "tags": ["Startup", "Hardware", "Cryptography", "Hugo"]
   },
   {
     "title": "Project 3",
