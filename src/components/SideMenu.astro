@@ -61,12 +61,12 @@ const items: Item[] = [
 
 <style>
   .side-menu-link.active .side-menu-dot {
-    background: var(--color-accent);
+    background-color: var(--color-accent) !important;
     transform: scale(2);
     box-shadow: 0 0 8px var(--color-accent);
   }
   .side-menu-link.active .side-menu-label {
-    color: var(--color-accent);
+    color: var(--color-accent) !important;
     font-weight: 600;
   }
   .side-menu-link.expanded .side-menu-caret {
@@ -75,7 +75,7 @@ const items: Item[] = [
 </style>
 
 <script is:inline>
-  (function () {
+  function __sideMenuInit() {
     const links = Array.from(document.querySelectorAll('.side-menu-link'));
     if (!links.length) return;
     const map = new Map();
@@ -178,5 +178,10 @@ const items: Item[] = [
         history.replaceState(null, '', `#${id}`);
       });
     });
-  })();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', __sideMenuInit);
+  } else {
+    __sideMenuInit();
+  }
 </script>
