@@ -20,39 +20,43 @@ type YearGroup = {
 const years = art as YearGroup[];
 ---
 
-<section class="px-6 py-16 max-w-3xl mx-auto">
+<section class="px-6 py-16 max-w-5xl mx-auto">
   <h2 class="text-sm uppercase tracking-widest text-muted">Art</h2>
 
   {years.map((y) => (
-    <div class="mt-10">
+    <div class="mt-12">
       <h3 class="text-2xl font-bold tracking-tight">{y.year}</h3>
 
       {y.categories.map((c) => (
-        <div class="mt-6">
+        <div class="mt-8">
           <h4 class="text-sm font-semibold text-muted uppercase tracking-wider">{c.name}</h4>
 
           {c.pieces.length > 0 ? (
-            <ul class="mt-3 grid gap-3 grid-cols-2 md:grid-cols-3">
+            <ul class="mt-4 grid gap-4 grid-cols-1 sm:grid-cols-2">
               {c.pieces.map((p) => (
-                <li class="group">
-                  <a href={p.image} target="_blank" rel="noopener" class="block">
-                    <div class="aspect-square overflow-hidden rounded-lg border border-border bg-border/30">
-                      <img
-                        src={p.image}
-                        alt={p.caption || c.name}
-                        loading="lazy"
-                        class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      />
-                    </div>
-                    {p.caption && (
-                      <p class="mt-1 text-xs text-muted">{p.caption}</p>
-                    )}
-                  </a>
+                <li>
+                  <button
+                    type="button"
+                    class="art-thumb block w-full rounded-lg border border-border overflow-hidden bg-border/20 hover:border-accent transition-colors"
+                    data-image={p.image}
+                    data-caption={p.caption || c.name}
+                    data-category={c.name}
+                  >
+                    <img
+                      src={p.image}
+                      alt={p.caption || c.name}
+                      loading="lazy"
+                      class="w-full h-auto object-contain"
+                    />
+                  </button>
+                  {p.caption && (
+                    <p class="mt-1 text-xs text-muted">{p.caption}</p>
+                  )}
                 </li>
               ))}
             </ul>
           ) : (
-            <div class="mt-3 rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted">
+            <div class="mt-4 rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted">
               No images yet — drop files into <code class="text-fg">public/art/{y.year}/{c.slug}/</code> and add them to <code class="text-fg">src/content/art.json</code>
             </div>
           )}
@@ -61,3 +65,108 @@ const years = art as YearGroup[];
     </div>
   ))}
 </section>
+
+<div
+  id="art-lightbox"
+  class="fixed inset-0 z-50 hidden items-center justify-center bg-black/90 p-4 cursor-pointer"
+  role="dialog"
+  aria-modal="true"
+  aria-label="Image viewer"
+>
+  <button
+    id="art-lightbox-close"
+    type="button"
+    class="absolute top-4 right-4 text-white/80 hover:text-white text-3xl leading-none p-2"
+    aria-label="Close"
+  >×</button>
+  <button
+    id="art-lightbox-prev"
+    type="button"
+    class="absolute left-4 top-1/2 -translate-y-1/2 text-white/60 hover:text-white text-5xl leading-none p-3"
+    aria-label="Previous image"
+  >‹</button>
+  <button
+    id="art-lightbox-next"
+    type="button"
+    class="absolute right-4 top-1/2 -translate-y-1/2 text-white/60 hover:text-white text-5xl leading-none p-3"
+    aria-label="Next image"
+  >›</button>
+  <figure class="max-w-full max-h-full flex flex-col items-center gap-3" onclick="event.stopPropagation()">
+    <img id="art-lightbox-img" src="" alt="" class="max-w-full max-h-[85vh] object-contain rounded shadow-2xl" />
+    <figcaption id="art-lightbox-caption" class="text-sm text-white/70 text-center"></figcaption>
+  </figure>
+</div>
+
+<script is:inline>
+  (function () {
+    const lightbox = document.getElementById('art-lightbox');
+    const img = document.getElementById('art-lightbox-img');
+    const caption = document.getElementById('art-lightbox-caption');
+    const closeBtn = document.getElementById('art-lightbox-close');
+    const prevBtn = document.getElementById('art-lightbox-prev');
+    const nextBtn = document.getElementById('art-lightbox-next');
+    const thumbs = Array.from(document.querySelectorAll('.art-thumb'));
+
+    // Group thumbs by category so arrow keys cycle within a category
+    const groups = new Map();
+    thumbs.forEach((t) => {
+      const cat = t.dataset.category;
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat).push(t);
+    });
+
+    let currentGroup = [];
+    let currentIndex = 0;
+
+    function show(thumb) {
+      const cat = thumb.dataset.category;
+      currentGroup = groups.get(cat) || [thumb];
+      currentIndex = currentGroup.indexOf(thumb);
+      render();
+      lightbox.classList.remove('hidden');
+      lightbox.classList.add('flex');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function render() {
+      const t = currentGroup[currentIndex];
+      img.src = t.dataset.image;
+      img.alt = t.dataset.caption || '';
+      caption.textContent = currentGroup.length > 1
+        ? `${t.dataset.category} — ${currentIndex + 1} / ${currentGroup.length}`
+        : (t.dataset.caption || t.dataset.category);
+      prevBtn.style.visibility = currentGroup.length > 1 ? 'visible' : 'hidden';
+      nextBtn.style.visibility = currentGroup.length > 1 ? 'visible' : 'hidden';
+    }
+
+    function hide() {
+      lightbox.classList.add('hidden');
+      lightbox.classList.remove('flex');
+      img.src = '';
+      document.body.style.overflow = '';
+    }
+
+    function next() {
+      currentIndex = (currentIndex + 1) % currentGroup.length;
+      render();
+    }
+
+    function prev() {
+      currentIndex = (currentIndex - 1 + currentGroup.length) % currentGroup.length;
+      render();
+    }
+
+    thumbs.forEach((t) => t.addEventListener('click', () => show(t)));
+    closeBtn.addEventListener('click', hide);
+    lightbox.addEventListener('click', hide);
+    prevBtn.addEventListener('click', (e) => { e.stopPropagation(); prev(); });
+    nextBtn.addEventListener('click', (e) => { e.stopPropagation(); next(); });
+
+    document.addEventListener('keydown', (e) => {
+      if (lightbox.classList.contains('hidden')) return;
+      if (e.key === 'Escape') hide();
+      else if (e.key === 'ArrowRight') next();
+      else if (e.key === 'ArrowLeft') prev();
+    });
+  })();
+</script>
