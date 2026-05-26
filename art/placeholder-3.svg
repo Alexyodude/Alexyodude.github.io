@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
-  <rect width="400" height="400" fill="#1e293b"/>
-  <rect x="100" y="100" width="200" height="200" fill="none" stroke="#34d399" stroke-width="6" transform="rotate(15 200 200)"/>
-  <text x="200" y="215" font-family="Inter, sans-serif" font-size="28" font-weight="600" fill="#94a3b8" text-anchor="middle">Art 3</text>
-</svg>
