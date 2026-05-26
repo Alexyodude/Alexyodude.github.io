@@ -31,6 +31,13 @@ body {
   min-height: 100vh;
 }
 
+/* Keep page content above the fixed background canvas (z-index: 0) */
+body > main,
+body > footer {
+  position: relative;
+  z-index: 1;
+}
+
 a {
   color: inherit;
   text-decoration: none;

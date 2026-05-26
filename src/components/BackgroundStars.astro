@@ -1,0 +1,118 @@
+---
+// Deterministic 3D starfield. Positions are seeded so the universe is fixed for
+// every visitor. Camera motion is driven by Date.now() — two visitors at the
+// same wall-clock moment see the same view. Renders behind page content.
+---
+
+<canvas id="bg-stars" aria-hidden="true"></canvas>
+
+<style>
+  #bg-stars {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0;
+    pointer-events: none;
+  }
+</style>
+
+<script is:inline>
+  (function () {
+    const canvas = document.getElementById('bg-stars');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d', { alpha: true });
+
+    // --- deterministic pseudo-random (mulberry32) ---
+    function rng(seed) {
+      let s = seed >>> 0;
+      return function () {
+        s = (s + 0x6D2B79F5) >>> 0;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // --- generate the universe once, seeded so everyone shares it ---
+    const SEED = 0xA1EC0DE;
+    const STAR_COUNT = 1800;
+    const Z_NEAR = 1;
+    const Z_FAR = 1200;
+
+    const rand = rng(SEED);
+    const stars = new Float32Array(STAR_COUNT * 4); // x, y, z, brightness
+    for (let i = 0; i < STAR_COUNT; i++) {
+      stars[i * 4 + 0] = (rand() - 0.5) * 2;             // x in [-1, 1]
+      stars[i * 4 + 1] = (rand() - 0.5) * 2;             // y
+      stars[i * 4 + 2] = Z_NEAR + rand() * (Z_FAR - Z_NEAR); // z in [near, far]
+      stars[i * 4 + 3] = 0.3 + rand() * 0.7;             // brightness 0.3-1.0
+    }
+
+    // --- viewport ---
+    let w = 0, h = 0, cx = 0, cy = 0, dpr = 1, focal = 0;
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      w = window.innerWidth;
+      h = window.innerHeight;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cx = w / 2;
+      cy = h / 2;
+      focal = Math.max(w, h) * 0.9; // perspective focal length
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    // --- theme-reactive star color ---
+    function isDark() {
+      return document.documentElement.getAttribute('data-theme') === 'dark';
+    }
+
+    // --- render loop ---
+    function frame() {
+      // wall-clock drives the camera; every visitor sees the same view at the same instant
+      const t = Date.now() * 0.00006; // expansion rate
+      const camZ = (t * Z_FAR) % Z_FAR;
+      const yaw = Math.sin(t * 0.1) * 0.15;
+      const cosY = Math.cos(yaw);
+      const sinY = Math.sin(yaw);
+
+      ctx.clearRect(0, 0, w, h);
+      const dark = isDark();
+      const color = dark ? '255,255,255' : '15,23,42';
+
+      for (let i = 0; i < STAR_COUNT; i++) {
+        const sx = stars[i * 4 + 0];
+        const sy = stars[i * 4 + 1];
+        let sz = stars[i * 4 + 2] - camZ;
+        // wrap stars that have passed the camera back to the far plane
+        if (sz < Z_NEAR) sz += Z_FAR;
+
+        // small yaw for parallax interest
+        const wx = sx * cosY - 0 * sinY;
+        const wz = sx * sinY + sz * cosY;
+
+        const k = focal / wz;
+        const px = cx + wx * k * 400;
+        const py = cy + sy * k * 400;
+
+        if (px < -20 || px > w + 20 || py < -20 || py > h + 20) continue;
+
+        const depth = 1 - sz / Z_FAR;        // 0 (far) → 1 (near)
+        const size = Math.max(0.5, depth * 2.5);
+        const alpha = stars[i * 4 + 3] * (0.15 + depth * 0.75);
+
+        ctx.fillStyle = `rgba(${color},${alpha.toFixed(3)})`;
+        ctx.fillRect(px - size / 2, py - size / 2, size, size);
+      }
+
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+</script>
