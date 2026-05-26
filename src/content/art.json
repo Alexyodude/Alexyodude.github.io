@@ -83,6 +83,7 @@
       {
         "name": "Children's book",
         "slug": "childrens-book",
+        "display": "pages",
         "pieces": [
           { "image": "/art/2017-2018/childrens-book/cover.jpg", "caption": "Cover" },
           { "image": "/art/2017-2018/childrens-book/page-1.jpg" },

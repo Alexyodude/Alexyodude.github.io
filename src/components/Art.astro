@@ -9,6 +9,7 @@ type Piece = {
 type Category = {
   name: string;
   slug: string;
+  display?: 'grid' | 'pages';
   pieces: Piece[];
 };
 
@@ -31,7 +32,34 @@ const years = art as YearGroup[];
         <div class="mt-8">
           <h4 class="text-sm font-semibold text-muted uppercase tracking-wider">{c.name}</h4>
 
-          {c.pieces.length > 0 ? (
+          {c.pieces.length > 0 && c.display === 'pages' ? (
+            <div class="mt-4 art-pager" data-category={c.name} data-total={c.pieces.length}>
+              <div class="rounded-lg border border-border overflow-hidden bg-border/20">
+                {c.pieces.map((p, i) => (
+                  <button
+                    type="button"
+                    class={`art-pager-page art-thumb block w-full ${i === 0 ? '' : 'hidden'}`}
+                    data-index={i}
+                    data-image={p.image}
+                    data-caption={p.caption || `${c.name} — page ${i + 1}`}
+                    data-category={c.name}
+                  >
+                    <img
+                      src={p.image}
+                      alt={p.caption || `${c.name} page ${i + 1}`}
+                      loading={i === 0 ? 'eager' : 'lazy'}
+                      class="w-full h-auto object-contain"
+                    />
+                  </button>
+                ))}
+              </div>
+              <div class="mt-3 flex items-center justify-between gap-3 text-sm">
+                <button type="button" class="art-pager-prev rounded border border-border px-3 py-1 hover:border-accent disabled:opacity-40 disabled:cursor-not-allowed" disabled>← Prev</button>
+                <span class="art-pager-counter text-xs text-muted">1 / {c.pieces.length}</span>
+                <button type="button" class="art-pager-next rounded border border-border px-3 py-1 hover:border-accent disabled:opacity-40 disabled:cursor-not-allowed">Next →</button>
+              </div>
+            </div>
+          ) : c.pieces.length > 0 ? (
             <ul class="mt-4 grid gap-4 grid-cols-1 sm:grid-cols-2">
               {c.pieces.map((p) => (
                 <li>
@@ -105,6 +133,25 @@ const years = art as YearGroup[];
     const closeBtn = document.getElementById('art-lightbox-close');
     const prevBtn = document.getElementById('art-lightbox-prev');
     const nextBtn = document.getElementById('art-lightbox-next');
+    // Pager initialization (e.g. children's book) — only one page visible at a time
+    document.querySelectorAll('.art-pager').forEach((pager) => {
+      const pages = Array.from(pager.querySelectorAll('.art-pager-page'));
+      const total = pages.length;
+      const prevBtn = pager.querySelector('.art-pager-prev');
+      const nextBtn = pager.querySelector('.art-pager-next');
+      const counter = pager.querySelector('.art-pager-counter');
+      let i = 0;
+      function render() {
+        pages.forEach((p, idx) => p.classList.toggle('hidden', idx !== i));
+        counter.textContent = `${i + 1} / ${total}`;
+        prevBtn.disabled = i === 0;
+        nextBtn.disabled = i === total - 1;
+      }
+      prevBtn.addEventListener('click', () => { if (i > 0) { i--; render(); } });
+      nextBtn.addEventListener('click', () => { if (i < total - 1) { i++; render(); } });
+      render();
+    });
+
     const thumbs = Array.from(document.querySelectorAll('.art-thumb'));
 
     // Group thumbs by category so arrow keys cycle within a category
