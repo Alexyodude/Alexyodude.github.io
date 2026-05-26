@@ -4,6 +4,7 @@ import art from '../content/art.json';
 type Piece = {
   image: string;
   caption?: string;
+  archived?: boolean;
 };
 
 type Category = {
@@ -25,9 +26,24 @@ interface Props {
 
 const { archived = false } = Astro.props;
 const raw = art as YearGroup[];
-// Filter categories by archived flag, drop years that end up empty
+// Resolve visible pieces per category based on mode:
+//   main page (archived=false):  drop archived categories; in remaining ones drop archived pieces
+//   archive page (archived=true): archived categories show all pieces; non-archived categories show only archived pieces
+function visiblePieces(c: Category): Piece[] {
+  if (archived) {
+    if (c.archived) return c.pieces;
+    return c.pieces.filter((p) => p.archived);
+  }
+  if (c.archived) return [];
+  return c.pieces.filter((p) => !p.archived);
+}
 const years = raw
-  .map((y) => ({ ...y, categories: y.categories.filter((c) => Boolean(c.archived) === archived) }))
+  .map((y) => ({
+    ...y,
+    categories: y.categories
+      .map((c) => ({ ...c, pieces: visiblePieces(c) }))
+      .filter((c) => c.pieces.length > 0),
+  }))
   .filter((y) => y.categories.length > 0);
 const heading = archived ? 'Archive' : 'Art';
 ---

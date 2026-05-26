@@ -6,7 +6,7 @@
         "name": "Pencil",
         "slug": "pencil",
         "pieces": [
-          { "image": "/art/2018-2019/pencil/1.jpg" },
+          { "image": "/art/2018-2019/pencil/1.jpg", "archived": true },
           { "image": "/art/2018-2019/pencil/2.jpg" }
         ]
       },
@@ -132,8 +132,8 @@
         "pieces": [
           { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/1.jpg" },
           { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/2.jpg" },
-          { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/3.jpg" },
-          { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/4.jpg" },
+          { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/3.jpg", "archived": true },
+          { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/4.jpg", "archived": true },
           { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/5.jpg" }
         ]
       },
@@ -142,7 +142,7 @@
         "slug": "mixed-media",
         "pieces": [
           { "image": "/art/2016-2017/mixed-media/mashup-painting.jpg", "caption": "Mashup Painting" },
-          { "image": "/art/2016-2017/mixed-media/paper-cutting.jpg", "caption": "Paper Cutting" },
+          { "image": "/art/2016-2017/mixed-media/paper-cutting.jpg", "caption": "Paper Cutting", "archived": true },
           { "image": "/art/2016-2017/mixed-media/pastel-coloring.jpg", "caption": "Pastel Coloring" },
           { "image": "/art/2016-2017/mixed-media/apple-wallpaper.jpg", "caption": "Apple Wallpaper" }
         ]
