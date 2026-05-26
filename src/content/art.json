@@ -2,12 +2,61 @@
   {
     "year": "2018-2019",
     "categories": [
-      { "name": "Pencil", "slug": "pencil", "pieces": [] },
-      { "name": "Self Portrait", "slug": "self-portrait", "pieces": [] },
-      { "name": "Meaning", "slug": "meaning", "pieces": [] },
-      { "name": "Marker and Pen", "slug": "marker-and-pen", "pieces": [] },
-      { "name": "Human progress", "slug": "human-progress", "pieces": [] },
-      { "name": "Figure drawings", "slug": "figure-drawings", "pieces": [] }
+      {
+        "name": "Pencil",
+        "slug": "pencil",
+        "pieces": [
+          { "image": "/art/2018-2019/pencil/1.jpg" },
+          { "image": "/art/2018-2019/pencil/2.jpg" },
+          { "image": "/art/2018-2019/pencil/3.jpg" }
+        ]
+      },
+      {
+        "name": "Self Portrait",
+        "slug": "self-portrait",
+        "pieces": [
+          { "image": "/art/2018-2019/self-portrait/1.jpg" }
+        ]
+      },
+      {
+        "name": "Meaning",
+        "slug": "meaning",
+        "pieces": [
+          { "image": "/art/2018-2019/meaning/1.jpg" }
+        ]
+      },
+      {
+        "name": "Marker and Pen",
+        "slug": "marker-and-pen",
+        "pieces": [
+          { "image": "/art/2018-2019/marker-and-pen/1.jpg" }
+        ]
+      },
+      {
+        "name": "Human progress",
+        "slug": "human-progress",
+        "pieces": [
+          { "image": "/art/2018-2019/human-progress/1.jpg" },
+          { "image": "/art/2018-2019/human-progress/2.jpg" },
+          { "image": "/art/2018-2019/human-progress/3.jpg" },
+          { "image": "/art/2018-2019/human-progress/4.jpg" },
+          { "image": "/art/2018-2019/human-progress/5.jpg" },
+          { "image": "/art/2018-2019/human-progress/6.jpg" },
+          { "image": "/art/2018-2019/human-progress/7.jpg" },
+          { "image": "/art/2018-2019/human-progress/8.jpg" },
+          { "image": "/art/2018-2019/human-progress/9.jpg" },
+          { "image": "/art/2018-2019/human-progress/10.jpg" },
+          { "image": "/art/2018-2019/human-progress/11.jpg" }
+        ]
+      },
+      {
+        "name": "Figure drawings",
+        "slug": "figure-drawings",
+        "pieces": [
+          { "image": "/art/2018-2019/figure-drawings/1.jpg" },
+          { "image": "/art/2018-2019/figure-drawings/2.jpg" }
+        ]
+      }
     ]
   },
   {
@@ -23,7 +72,13 @@
           { "image": "/art/2017-2018/cubism-deconstruction/c-change.jpg" }
         ]
       },
-      { "name": "Past, Present, Future", "slug": "past-present-future", "pieces": [] },
+      {
+        "name": "Past, Present, Future",
+        "slug": "past-present-future",
+        "pieces": [
+          { "image": "/art/2017-2018/past-present-future/1.jpg" }
+        ]
+      },
       {
         "name": "Children's book",
         "slug": "childrens-book",
