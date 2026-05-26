@@ -1,0 +1,39 @@
+---
+import '../styles/global.css';
+import Art from '../components/Art.astro';
+import Footer from '../components/Footer.astro';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Archive — alexyodude.com</title>
+    <meta name="description" content="Archived work — pieces kept accessible but off the main page." />
+    <script is:inline>
+      (function () {
+        try {
+          var stored = localStorage.getItem('theme');
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var theme = stored || (prefersDark ? 'dark' : 'light');
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <main>
+      <section class="px-6 py-16 max-w-5xl mx-auto">
+        <a href="/" class="text-sm text-muted underline decoration-muted underline-offset-4 hover:text-accent hover:decoration-accent">← Home</a>
+        <h1 class="mt-6 text-4xl md:text-5xl font-bold tracking-tight">Archive</h1>
+        <p class="mt-3 text-muted">Work kept accessible but not on the main page.</p>
+      </section>
+      <Art archived />
+    </main>
+    <Footer />
+  </body>
+</html>

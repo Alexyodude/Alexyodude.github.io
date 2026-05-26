@@ -10,6 +10,7 @@ type Category = {
   name: string;
   slug: string;
   display?: 'grid' | 'pages' | 'fade';
+  archived?: boolean;
   pieces: Piece[];
 };
 
@@ -18,11 +19,26 @@ type YearGroup = {
   categories: Category[];
 };
 
-const years = art as YearGroup[];
+interface Props {
+  archived?: boolean;
+}
+
+const { archived = false } = Astro.props;
+const raw = art as YearGroup[];
+// Filter categories by archived flag, drop years that end up empty
+const years = raw
+  .map((y) => ({ ...y, categories: y.categories.filter((c) => Boolean(c.archived) === archived) }))
+  .filter((y) => y.categories.length > 0);
+const heading = archived ? 'Archive' : 'Art';
 ---
 
 <section class="px-6 py-16 max-w-5xl mx-auto">
-  <h2 class="text-sm uppercase tracking-widest text-muted">Art</h2>
+  <div class="flex items-baseline justify-between gap-4">
+    <h2 class="text-sm uppercase tracking-widest text-muted">{heading}</h2>
+    {!archived && (
+      <a href="/archive" class="text-xs text-muted underline decoration-muted underline-offset-4 hover:text-accent hover:decoration-accent">Archive →</a>
+    )}
+  </div>
 
   {years.map((y) => (
     <div class="mt-12">
