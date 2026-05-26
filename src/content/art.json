@@ -66,8 +66,8 @@
       {
         "name": "Cubism deconstruction",
         "slug": "cubism-deconstruction",
+        "display": "fade",
         "pieces": [
-          { "image": "/art/2017-2018/cubism-deconstruction/abc-combined.jpg" },
           { "image": "/art/2017-2018/cubism-deconstruction/a-change.jpg" },
           { "image": "/art/2017-2018/cubism-deconstruction/b-change.jpg" },
           { "image": "/art/2017-2018/cubism-deconstruction/c-change.jpg" }

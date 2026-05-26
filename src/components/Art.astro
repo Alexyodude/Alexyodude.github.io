@@ -9,7 +9,7 @@ type Piece = {
 type Category = {
   name: string;
   slug: string;
-  display?: 'grid' | 'pages';
+  display?: 'grid' | 'pages' | 'fade';
   pieces: Piece[];
 };
 
@@ -32,7 +32,42 @@ const years = art as YearGroup[];
         <div class="mt-8">
           <h4 class="text-sm font-semibold text-muted uppercase tracking-wider">{c.name}</h4>
 
-          {c.pieces.length > 0 && c.display === 'pages' ? (
+          {c.pieces.length > 0 && c.display === 'fade' ? (
+            <div class="mt-4">
+              <button
+                type="button"
+                class="art-fade relative block w-full rounded-lg border border-border overflow-hidden bg-border/20 hover:border-accent transition-colors"
+                data-category={c.name}
+                aria-label={`${c.name} — loop of ${c.pieces.length} variations`}
+              >
+                {c.pieces.map((p, i) => (
+                  <img
+                    src={p.image}
+                    alt={p.caption || c.name}
+                    loading={i === 0 ? 'eager' : 'lazy'}
+                    class="art-fade-frame w-full h-auto object-contain"
+                    style={i === 0
+                      ? 'opacity:1;transition:opacity 800ms ease-in-out;'
+                      : 'position:absolute;inset:0;opacity:0;transition:opacity 800ms ease-in-out;'}
+                  />
+                ))}
+              </button>
+              <p class="mt-1 text-xs text-muted">Click to view full size · loop of {c.pieces.length} frames</p>
+              <ul class="hidden">
+                {c.pieces.map((p) => (
+                  <li>
+                    <button
+                      type="button"
+                      class="art-thumb"
+                      data-image={p.image}
+                      data-caption={p.caption || c.name}
+                      data-category={c.name}
+                    ></button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : c.pieces.length > 0 && c.display === 'pages' ? (
             <div class="mt-4 art-pager" data-category={c.name} data-total={c.pieces.length}>
               <div class="rounded-lg border border-border overflow-hidden bg-border/20">
                 {c.pieces.map((p, i) => (
@@ -133,6 +168,35 @@ const years = art as YearGroup[];
     const closeBtn = document.getElementById('art-lightbox-close');
     const prevBtn = document.getElementById('art-lightbox-prev');
     const nextBtn = document.getElementById('art-lightbox-next');
+    // Fade-loop initialization (e.g. cubism deconstruction) — cycle frame opacity
+    document.querySelectorAll('.art-fade').forEach((fade) => {
+      const frames = Array.from(fade.querySelectorAll('.art-fade-frame'));
+      if (frames.length < 2) return;
+      // Equalize container height to the natural aspect of the first frame
+      const first = frames[0];
+      function setHeight() {
+        if (first.naturalWidth && first.naturalHeight) {
+          const ratio = first.naturalHeight / first.naturalWidth;
+          fade.style.aspectRatio = `${first.naturalWidth} / ${first.naturalHeight}`;
+        }
+      }
+      if (first.complete) setHeight();
+      else first.addEventListener('load', setHeight, { once: true });
+      let i = 0;
+      setInterval(() => {
+        frames[i].style.opacity = '0';
+        i = (i + 1) % frames.length;
+        frames[i].style.opacity = '1';
+      }, 2500);
+      // Clicking fade container opens lightbox with the currently visible frame
+      fade.addEventListener('click', () => {
+        const cat = fade.dataset.category;
+        const list = document.querySelectorAll('.art-thumb');
+        const match = Array.from(list).find((t) => t.dataset.category === cat && t.dataset.image === frames[i].src.replace(window.location.origin, ''));
+        if (match) match.click();
+      });
+    });
+
     // Pager initialization (e.g. children's book) — only one page visible at a time
     document.querySelectorAll('.art-pager').forEach((pager) => {
       const pages = Array.from(pager.querySelectorAll('.art-pager-page'));
