@@ -6,7 +6,7 @@
         "name": "Pencil",
         "slug": "pencil",
         "pieces": [
-          { "image": "/art/2018-2019/pencil/1.jpg", "archived": true },
+          { "image": "/art/2018-2019/pencil/1.jpg" },
           { "image": "/art/2018-2019/pencil/2.jpg" }
         ]
       },
