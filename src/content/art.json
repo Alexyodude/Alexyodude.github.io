@@ -1,15 +1,5 @@
 [
   {
-    "year": "2017-2018",
-    "categories": [
-      { "name": "Cubism deconstruction", "slug": "cubism-deconstruction", "pieces": [] },
-      { "name": "Past, Present, Future", "slug": "past-present-future", "pieces": [] },
-      { "name": "Children's book", "slug": "childrens-book", "pieces": [] },
-      { "name": "Landscape", "slug": "landscape", "pieces": [] },
-      { "name": "Time", "slug": "time", "pieces": [] }
-    ]
-  },
-  {
     "year": "2018-2019",
     "categories": [
       { "name": "Pencil", "slug": "pencil", "pieces": [] },
@@ -18,6 +8,86 @@
       { "name": "Marker and Pen", "slug": "marker-and-pen", "pieces": [] },
       { "name": "Human progress", "slug": "human-progress", "pieces": [] },
       { "name": "Figure drawings", "slug": "figure-drawings", "pieces": [] }
+    ]
+  },
+  {
+    "year": "2017-2018",
+    "categories": [
+      {
+        "name": "Cubism deconstruction",
+        "slug": "cubism-deconstruction",
+        "pieces": [
+          { "image": "/art/2017-2018/cubism-deconstruction/abc-combined.jpg" },
+          { "image": "/art/2017-2018/cubism-deconstruction/a-change.jpg" },
+          { "image": "/art/2017-2018/cubism-deconstruction/b-change.jpg" },
+          { "image": "/art/2017-2018/cubism-deconstruction/c-change.jpg" }
+        ]
+      },
+      { "name": "Past, Present, Future", "slug": "past-present-future", "pieces": [] },
+      {
+        "name": "Children's book",
+        "slug": "childrens-book",
+        "pieces": [
+          { "image": "/art/2017-2018/childrens-book/cover.jpg", "caption": "Cover" },
+          { "image": "/art/2017-2018/childrens-book/page-1.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-2.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-3.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-4.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-5.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-6.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-7.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-8.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-9.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-10.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-11.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-12.jpg" },
+          { "image": "/art/2017-2018/childrens-book/page-13.jpg" }
+        ]
+      },
+      {
+        "name": "Landscape",
+        "slug": "landscape",
+        "pieces": [
+          { "image": "/art/2017-2018/landscape/landscape.jpg" }
+        ]
+      },
+      {
+        "name": "Time",
+        "slug": "time",
+        "pieces": [
+          { "image": "/art/2017-2018/time/big-bang.jpg", "caption": "Big Bang" },
+          { "image": "/art/2017-2018/time/conscience-time.jpg", "caption": "Conscience Time" },
+          { "image": "/art/2017-2018/time/irregular-time.jpg", "caption": "Irregular Time" },
+          { "image": "/art/2017-2018/time/space-wormhole.jpg", "caption": "Space Wormhole" },
+          { "image": "/art/2017-2018/time/virtruvian-time-man.jpg", "caption": "Vitruvian Time Man" }
+        ]
+      }
+    ]
+  },
+  {
+    "year": "2016-2017",
+    "categories": [
+      {
+        "name": "Alginate Mold of Modern Fossils",
+        "slug": "alginate-mold-of-modern-fossils",
+        "pieces": [
+          { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/1.jpg" },
+          { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/2.jpg" },
+          { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/3.jpg" },
+          { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/4.jpg" },
+          { "image": "/art/2016-2017/alginate-mold-of-modern-fossils/5.jpg" }
+        ]
+      },
+      {
+        "name": "Mixed Media",
+        "slug": "mixed-media",
+        "pieces": [
+          { "image": "/art/2016-2017/mixed-media/mashup-painting.jpg", "caption": "Mashup Painting" },
+          { "image": "/art/2016-2017/mixed-media/paper-cutting.jpg", "caption": "Paper Cutting" },
+          { "image": "/art/2016-2017/mixed-media/pastel-coloring.jpg", "caption": "Pastel Coloring" },
+          { "image": "/art/2016-2017/mixed-media/apple-wallpaper.jpg", "caption": "Apple Wallpaper" }
+        ]
+      }
     ]
   }
 ]
