@@ -1,32 +1,59 @@
 ---
-const items = [
+import art from '../content/art.json';
+
+type Y = { year: string; categories: { archived?: boolean }[] };
+const years = (art as Y[])
+  .map((y) => ({ year: y.year, hasVisible: y.categories.some((c) => !c.archived) }))
+  .filter((y) => y.hasVisible)
+  .map((y) => ({ id: `art-${y.year}`, label: y.year }));
+
+type Item = { id: string; label: string; children?: { id: string; label: string }[] };
+const items: Item[] = [
   { id: 'top',       label: 'Top' },
   { id: 'about',     label: 'About' },
   { id: 'featured',  label: 'Featured' },
   { id: 'timeline',  label: 'Timeline' },
-  { id: 'art',       label: 'Art' },
+  { id: 'art',       label: 'Art', children: years },
   { id: 'projects',  label: 'All Projects' },
 ];
 ---
 
 <aside
   id="side-menu"
-  class="hidden lg:block fixed left-6 top-1/2 -translate-y-1/2 z-20"
+  class="hidden lg:block fixed left-6 top-1/2 -translate-y-1/2 z-20 max-w-[15rem]"
   aria-label="Section navigation"
 >
-  <ul class="space-y-2 text-xs">
+  <ul class="space-y-1 text-xs">
     {items.map((it) => (
       <li>
         <a
           href={`#${it.id}`}
           data-target={it.id}
-          class="side-menu-link group flex items-center gap-3 text-muted hover:text-accent transition-colors"
+          data-has-children={it.children && it.children.length > 0 ? 'true' : 'false'}
+          class="side-menu-link group flex items-center gap-2 py-1 text-muted hover:text-accent transition-colors"
         >
-          <span class="side-menu-dot inline-block h-1.5 w-1.5 rounded-full bg-muted transition-all"></span>
-          <span class="side-menu-label opacity-0 group-hover:opacity-100 transition-opacity tracking-wider uppercase">
-            {it.label}
-          </span>
+          <span class="side-menu-dot inline-block h-1.5 w-1.5 rounded-full bg-muted transition-all flex-shrink-0"></span>
+          <span class="side-menu-label tracking-wider uppercase">{it.label}</span>
+          {it.children && it.children.length > 0 && (
+            <span class="side-menu-caret text-[10px] opacity-50 transition-transform">▸</span>
+          )}
         </a>
+        {it.children && it.children.length > 0 && (
+          <ul class="side-menu-sub ml-4 mt-1 mb-2 space-y-1 hidden">
+            {it.children.map((sub) => (
+              <li>
+                <a
+                  href={`#${sub.id}`}
+                  data-target={sub.id}
+                  class="side-menu-link side-menu-sublink group flex items-center gap-2 py-0.5 text-muted hover:text-accent transition-colors"
+                >
+                  <span class="side-menu-dot inline-block h-1 w-1 rounded-full bg-muted transition-all flex-shrink-0"></span>
+                  <span class="side-menu-label text-[10px] tracking-wider uppercase">{sub.label}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
       </li>
     ))}
   </ul>
@@ -38,8 +65,10 @@ const items = [
     transform: scale(1.6);
   }
   .side-menu-link.active .side-menu-label {
-    opacity: 1;
     color: var(--color-fg);
+  }
+  .side-menu-link.expanded .side-menu-caret {
+    transform: rotate(90deg);
   }
 </style>
 
@@ -54,17 +83,51 @@ const items = [
       if (el) map.set(el, a);
     });
 
-    let active = null;
+    function expand(parentLink, shouldExpand) {
+      if (!parentLink || parentLink.dataset.hasChildren !== 'true') return;
+      const sub = parentLink.parentElement.querySelector('.side-menu-sub');
+      if (!sub) return;
+      sub.classList.toggle('hidden', !shouldExpand);
+      parentLink.classList.toggle('expanded', shouldExpand);
+    }
+
+    function findParentLink(link) {
+      // Sub-link's parent is the sibling `.side-menu-sub`, whose parent is the <li>
+      const li = link.closest('li');
+      if (!li) return null;
+      const parentLi = li.parentElement && li.parentElement.closest('li');
+      if (!parentLi) return null;
+      return parentLi.querySelector(':scope > .side-menu-link');
+    }
+
+    let activeLink = null;
     function setActive(link) {
-      if (active === link) return;
-      if (active) active.classList.remove('active');
-      active = link;
-      if (active) active.classList.add('active');
+      if (activeLink === link) return;
+      if (activeLink) activeLink.classList.remove('active');
+      activeLink = link;
+      if (!activeLink) return;
+      activeLink.classList.add('active');
+
+      // If a sub-link became active, also mark + expand its parent
+      const parent = findParentLink(activeLink);
+      if (parent) {
+        parent.classList.add('active');
+        expand(parent, true);
+      } else {
+        // If a top-level with children became active via scroll, expand it;
+        // collapse other top-levels with children
+        document.querySelectorAll('.side-menu-link[data-has-children="true"]').forEach((p) => {
+          expand(p, p === activeLink);
+        });
+        // Make sure direct sub-link 'active' marks are cleared
+        document.querySelectorAll('.side-menu-sublink.active').forEach((s) => {
+          if (s !== activeLink) s.classList.remove('active');
+        });
+      }
     }
 
     const io = new IntersectionObserver(
       (entries) => {
-        // Pick the entry closest to the top of the viewport that is intersecting
         const visible = entries
           .filter((e) => e.isIntersecting)
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
@@ -73,17 +136,26 @@ const items = [
           if (link) setActive(link);
         }
       },
-      { rootMargin: '-30% 0px -60% 0px', threshold: 0 }
+      { rootMargin: '-25% 0px -60% 0px', threshold: 0 }
     );
     map.forEach((_, el) => io.observe(el));
 
-    // Smooth scroll on click (CSS handles via scroll-behavior; ensure consistent)
+    // Click: expand if has children, then smooth scroll
     links.forEach((a) => {
       a.addEventListener('click', (e) => {
         const id = a.dataset.target;
         const el = document.getElementById(id);
         if (!el) return;
         e.preventDefault();
+        if (a.dataset.hasChildren === 'true') {
+          // Toggle expansion explicitly on click
+          const isExpanded = a.classList.contains('expanded');
+          // Collapse other open siblings first
+          document.querySelectorAll('.side-menu-link[data-has-children="true"]').forEach((p) => {
+            if (p !== a) expand(p, false);
+          });
+          expand(a, !isExpanded);
+        }
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         history.replaceState(null, '', `#${id}`);
       });
