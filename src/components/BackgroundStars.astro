@@ -1,7 +1,10 @@
 ---
-// Deterministic 3D starfield. Positions are seeded so the universe is fixed for
-// every visitor. Camera motion is driven by Date.now() — two visitors at the
-// same wall-clock moment see the same view. Renders behind page content.
+// Deterministic 3D universe. Star positions, spectral classes, nebulae, black
+// holes, planets, and comet schedule are all seeded — so everyone sees the
+// same universe. Camera motion + comet timing are driven by Date.now() so two
+// visitors at the same wall-clock moment see the same view. Proportions
+// loosely follow real astronomy (mostly empty space, M dwarfs dominate, a
+// few bright hot stars, rare nebulae, very rare black holes, occasional comets).
 ---
 
 <canvas id="bg-stars" aria-hidden="true"></canvas>
@@ -23,7 +26,7 @@
     if (!canvas) return;
     const ctx = canvas.getContext('2d', { alpha: true });
 
-    // --- deterministic pseudo-random (mulberry32) ---
+    // ---------- deterministic PRNG ----------
     function rng(seed) {
       let s = seed >>> 0;
       return function () {
@@ -35,22 +38,164 @@
       };
     }
 
-    // --- generate the universe once, seeded so everyone shares it ---
     const SEED = 0xA1EC0DE;
-    const STAR_COUNT = 1800;
     const Z_NEAR = 1;
     const Z_FAR = 1200;
 
-    const rand = rng(SEED);
-    const stars = new Float32Array(STAR_COUNT * 4); // x, y, z, brightness
-    for (let i = 0; i < STAR_COUNT; i++) {
-      stars[i * 4 + 0] = (rand() - 0.5) * 2;             // x in [-1, 1]
-      stars[i * 4 + 1] = (rand() - 0.5) * 2;             // y
-      stars[i * 4 + 2] = Z_NEAR + rand() * (Z_FAR - Z_NEAR); // z in [near, far]
-      stars[i * 4 + 3] = 0.3 + rand() * 0.7;             // brightness 0.3-1.0
+    // ---------- Stars with realistic spectral class distribution ----------
+    // Visually-weighted distribution (real M dwarfs are 76% but mostly invisible;
+    // we bias toward what you'd actually SEE in a dark sky).
+    // [class, color, weight, baseSize]
+    const SPECTRAL = [
+      ['O',  [155, 176, 255], 0.005, 1.6],
+      ['B',  [170, 191, 255], 0.04,  1.4],
+      ['A',  [202, 215, 255], 0.08,  1.2],
+      ['F',  [248, 247, 255], 0.12,  1.05],
+      ['G',  [255, 244, 234], 0.18,  1.0],
+      ['K',  [255, 210, 161], 0.27,  0.9],
+      ['M',  [255, 160, 110], 0.385, 0.7],
+    ];
+    function pickClass(r) {
+      let acc = 0;
+      for (const c of SPECTRAL) {
+        acc += c[2];
+        if (r < acc) return c;
+      }
+      return SPECTRAL[SPECTRAL.length - 1];
     }
 
-    // --- viewport ---
+    const STAR_COUNT = 1800;
+    const rand = rng(SEED);
+    // x, y, z, brightness, r, g, b, sizeBase
+    const stars = new Float32Array(STAR_COUNT * 8);
+    for (let i = 0; i < STAR_COUNT; i++) {
+      stars[i * 8 + 0] = (rand() - 0.5) * 2;
+      stars[i * 8 + 1] = (rand() - 0.5) * 2;
+      stars[i * 8 + 2] = Z_NEAR + rand() * (Z_FAR - Z_NEAR);
+      stars[i * 8 + 3] = 0.3 + rand() * 0.7;
+      const cls = pickClass(rand());
+      stars[i * 8 + 4] = cls[1][0];
+      stars[i * 8 + 5] = cls[1][1];
+      stars[i * 8 + 6] = cls[1][2];
+      stars[i * 8 + 7] = cls[3];
+    }
+
+    // ---------- Nebulae: large soft gradient bitmaps (pre-rendered) ----------
+    const NEBULA_PALETTE = [
+      [180, 100, 220], // purple
+      [220, 90, 150],  // magenta
+      [80, 160, 230],  // cyan-blue
+      [230, 110, 90],  // warm coral
+      [120, 200, 180], // teal
+    ];
+    const NEBULA_COUNT = 8;
+    const nebulae = [];
+    for (let i = 0; i < NEBULA_COUNT; i++) {
+      const color = NEBULA_PALETTE[Math.floor(rand() * NEBULA_PALETTE.length)];
+      const off = document.createElement('canvas');
+      const size = 256 + Math.floor(rand() * 256);
+      off.width = size;
+      off.height = size;
+      const octx = off.getContext('2d');
+      const g = octx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+      g.addColorStop(0,    `rgba(${color[0]},${color[1]},${color[2]},0.22)`);
+      g.addColorStop(0.4,  `rgba(${color[0]},${color[1]},${color[2]},0.07)`);
+      g.addColorStop(1,    `rgba(${color[0]},${color[1]},${color[2]},0)`);
+      octx.fillStyle = g;
+      octx.fillRect(0, 0, size, size);
+      nebulae.push({
+        x: (rand() - 0.5) * 2,
+        y: (rand() - 0.5) * 2,
+        z: Z_NEAR + rand() * (Z_FAR - Z_NEAR),
+        scale: 0.4 + rand() * 0.8,
+        sprite: off,
+      });
+    }
+
+    // ---------- Black holes: small dark disc + bright accretion ring (pre-rendered) ----------
+    const BH_COUNT = 3;
+    const blackHoles = [];
+    for (let i = 0; i < BH_COUNT; i++) {
+      const off = document.createElement('canvas');
+      const size = 200;
+      off.width = size;
+      off.height = size;
+      const octx = off.getContext('2d');
+      const cx0 = size / 2, cy0 = size / 2;
+      // Outer halo / gravitational lensing glow
+      const halo = octx.createRadialGradient(cx0, cy0, 14, cx0, cy0, size / 2);
+      halo.addColorStop(0,   'rgba(255,180,90,0.45)');
+      halo.addColorStop(0.2, 'rgba(255,120,40,0.18)');
+      halo.addColorStop(0.5, 'rgba(120,60,200,0.08)');
+      halo.addColorStop(1,   'rgba(0,0,0,0)');
+      octx.fillStyle = halo;
+      octx.fillRect(0, 0, size, size);
+      // Bright accretion ring
+      octx.strokeStyle = 'rgba(255,210,140,0.85)';
+      octx.lineWidth = 2.5;
+      octx.beginPath();
+      octx.arc(cx0, cy0, 16, 0, Math.PI * 2);
+      octx.stroke();
+      // Pitch-black event horizon
+      octx.fillStyle = '#000';
+      octx.beginPath();
+      octx.arc(cx0, cy0, 12, 0, Math.PI * 2);
+      octx.fill();
+      blackHoles.push({
+        x: (rand() - 0.5) * 1.5,
+        y: (rand() - 0.5) * 1.5,
+        z: Z_NEAR + rand() * (Z_FAR - Z_NEAR),
+        scale: 0.6 + rand() * 0.6,
+        sprite: off,
+      });
+    }
+
+    // ---------- Planets: small colored discs, one with rings ----------
+    const PLANET_PALETTE = [
+      { core: [180, 120, 80],  ring: null },         // rocky
+      { core: [200, 180, 130], ring: [210, 190, 140] }, // ringed
+      { core: [110, 160, 220], ring: null },         // ice giant
+      { core: [200, 90, 80],   ring: null },         // mars-like
+      { core: [230, 220, 200], ring: null },         // pale
+    ];
+    const PLANET_COUNT = 5;
+    const planets = [];
+    for (let i = 0; i < PLANET_COUNT; i++) {
+      const p = PLANET_PALETTE[Math.floor(rand() * PLANET_PALETTE.length)];
+      planets.push({
+        x: (rand() - 0.5) * 2,
+        y: (rand() - 0.5) * 2,
+        z: Z_NEAR + rand() * (Z_FAR - Z_NEAR),
+        radius: 2.5 + rand() * 3,
+        core: p.core,
+        ring: p.ring,
+      });
+    }
+
+    // ---------- Comets: scheduled deterministically from wall clock ----------
+    const COMET_PERIOD_MS = 14000; // a comet every ~14s globally
+    function activeComets(nowMs) {
+      // For each recent epoch, decide if a comet is active and what its path is.
+      const out = [];
+      const epoch = Math.floor(nowMs / COMET_PERIOD_MS);
+      for (let e = epoch - 1; e <= epoch; e++) {
+        const r = rng(SEED ^ (e * 2654435761));
+        const startX = r() * 1.4 - 0.7;
+        const startY = r() * 1.4 - 0.7;
+        const dx = (r() - 0.5) * 0.6;
+        const dy = (r() - 0.5) * 0.6;
+        const z = 100 + r() * 300; // somewhat near
+        const dur = 1200 + r() * 1500;
+        const startMs = e * COMET_PERIOD_MS;
+        const t = (nowMs - startMs) / dur;
+        if (t > 0 && t < 1) {
+          out.push({ startX, startY, dx, dy, z, t });
+        }
+      }
+      return out;
+    }
+
+    // ---------- Viewport ----------
     let w = 0, h = 0, cx = 0, cy = 0, dpr = 1, focal = 0;
     function resize() {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -63,52 +208,141 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       cx = w / 2;
       cy = h / 2;
-      focal = Math.max(w, h) * 0.9; // perspective focal length
+      focal = Math.max(w, h) * 0.9;
     }
     resize();
     window.addEventListener('resize', resize);
 
-    // --- theme-reactive star color ---
     function isDark() {
       return document.documentElement.getAttribute('data-theme') === 'dark';
     }
 
-    // --- render loop ---
+    // ---------- Projection ----------
+    function project(x, y, z, camZ) {
+      let pz = z - camZ;
+      if (pz < Z_NEAR) pz += Z_FAR;
+      const k = focal / pz;
+      const px = cx + x * k * 400;
+      const py = cy + y * k * 400;
+      return [px, py, pz, k];
+    }
+
+    // ---------- Render loop ----------
     function frame() {
-      // wall-clock drives the camera; every visitor sees the same view at the same instant
-      const t = Date.now() * 0.00006; // expansion rate
+      const nowMs = Date.now();
+      const t = nowMs * 0.00006;
       const camZ = (t * Z_FAR) % Z_FAR;
-      const yaw = Math.sin(t * 0.1) * 0.15;
-      const cosY = Math.cos(yaw);
-      const sinY = Math.sin(yaw);
 
       ctx.clearRect(0, 0, w, h);
       const dark = isDark();
-      const color = dark ? '255,255,255' : '15,23,42';
+      // Soft fill so the bg color shows but with a slight tint for depth
+      // (only in light mode, dark mode is already black)
+      if (!dark) {
+        ctx.fillStyle = 'rgba(245,247,250,0.5)';
+        ctx.fillRect(0, 0, w, h);
+      }
 
+      // 1. Nebulae (background bloom, additive)
+      ctx.globalCompositeOperation = dark ? 'lighter' : 'multiply';
+      for (const n of nebulae) {
+        const [px, py, pz, k] = project(n.x, n.y, n.z, camZ);
+        const size = n.sprite.width * k * n.scale;
+        if (size < 8 || size > 6000) continue;
+        if (px + size < 0 || px - size > w || py + size < 0 || py - size > h) continue;
+        ctx.drawImage(n.sprite, px - size / 2, py - size / 2, size, size);
+      }
+      ctx.globalCompositeOperation = 'source-over';
+
+      // 2. Stars
       for (let i = 0; i < STAR_COUNT; i++) {
-        const sx = stars[i * 4 + 0];
-        const sy = stars[i * 4 + 1];
-        let sz = stars[i * 4 + 2] - camZ;
-        // wrap stars that have passed the camera back to the far plane
-        if (sz < Z_NEAR) sz += Z_FAR;
-
-        // small yaw for parallax interest
-        const wx = sx * cosY - 0 * sinY;
-        const wz = sx * sinY + sz * cosY;
-
-        const k = focal / wz;
-        const px = cx + wx * k * 400;
-        const py = cy + sy * k * 400;
-
-        if (px < -20 || px > w + 20 || py < -20 || py > h + 20) continue;
-
-        const depth = 1 - sz / Z_FAR;        // 0 (far) → 1 (near)
-        const size = Math.max(0.5, depth * 2.5);
-        const alpha = stars[i * 4 + 3] * (0.15 + depth * 0.75);
-
-        ctx.fillStyle = `rgba(${color},${alpha.toFixed(3)})`;
+        const sx = stars[i * 8 + 0];
+        const sy = stars[i * 8 + 1];
+        const [px, py, pz, k] = project(sx, sy, stars[i * 8 + 2], camZ);
+        if (px < -10 || px > w + 10 || py < -10 || py > h + 10) continue;
+        const depth = 1 - pz / Z_FAR;
+        const size = Math.max(0.5, depth * 2.8 * stars[i * 8 + 7]);
+        const alpha = stars[i * 8 + 3] * (0.18 + depth * 0.78);
+        const r = stars[i * 8 + 4] | 0;
+        const g = stars[i * 8 + 5] | 0;
+        const b = stars[i * 8 + 6] | 0;
+        if (dark) {
+          ctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
+        } else {
+          // invert luminance for light mode: darken in proportion
+          const ir = Math.floor(255 - (255 - r) * 0.3);
+          const ig = Math.floor(255 - (255 - g) * 0.3);
+          const ib = Math.floor(255 - (255 - b) * 0.3);
+          ctx.fillStyle = `rgba(${Math.min(255 - ir, 60)},${Math.min(255 - ig, 60)},${Math.min(255 - ib, 60)},${(alpha * 0.55).toFixed(3)})`;
+        }
         ctx.fillRect(px - size / 2, py - size / 2, size, size);
+      }
+
+      // 3. Planets
+      for (const pl of planets) {
+        const [px, py, pz, k] = project(pl.x, pl.y, pl.z, camZ);
+        if (pz <= 0) continue;
+        const depth = 1 - pz / Z_FAR;
+        const rad = pl.radius * k * 0.5;
+        if (rad < 1.2) continue;
+        if (px + rad < 0 || px - rad > w || py + rad < 0 || py - rad > h) continue;
+        const [r, g, b] = pl.core;
+        // Sphere shading
+        const grad = ctx.createRadialGradient(px - rad * 0.35, py - rad * 0.35, 0, px, py, rad);
+        grad.addColorStop(0,   `rgba(${r + 30},${g + 30},${b + 30},${(0.95 * depth + 0.05).toFixed(2)})`);
+        grad.addColorStop(0.75,`rgba(${r},${g},${b},${(0.8 * depth + 0.1).toFixed(2)})`);
+        grad.addColorStop(1,   `rgba(${(r * 0.5) | 0},${(g * 0.5) | 0},${(b * 0.5) | 0},${(0.6 * depth + 0.1).toFixed(2)})`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(px, py, rad, 0, Math.PI * 2);
+        ctx.fill();
+        if (pl.ring && rad > 2) {
+          const [rr, rg, rb] = pl.ring;
+          ctx.strokeStyle = `rgba(${rr},${rg},${rb},${(0.6 * depth).toFixed(2)})`;
+          ctx.lineWidth = Math.max(0.6, rad * 0.18);
+          ctx.beginPath();
+          ctx.ellipse(px, py, rad * 1.7, rad * 0.45, 0.4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      // 4. Black holes (on top, with their accretion glow)
+      for (const bh of blackHoles) {
+        const [px, py, pz, k] = project(bh.x, bh.y, bh.z, camZ);
+        if (pz <= 0) continue;
+        const size = bh.sprite.width * k * bh.scale * 0.5;
+        if (size < 10 || size > 600) continue;
+        if (px + size < 0 || px - size > w || py + size < 0 || py - size > h) continue;
+        ctx.drawImage(bh.sprite, px - size / 2, py - size / 2, size, size);
+      }
+
+      // 5. Comets (streaks)
+      const cs = activeComets(nowMs);
+      for (const c of cs) {
+        const x0 = c.startX, y0 = c.startY;
+        const x1 = c.startX + c.dx * c.t;
+        const y1 = c.startY + c.dy * c.t;
+        const [px0, py0] = project(x0, y0, c.z, camZ);
+        const [px1, py1] = project(x1, y1, c.z, camZ);
+        const tailLen = 60;
+        // streak
+        const grad = ctx.createLinearGradient(
+          px1 - (px1 - px0) * 0.1, py1 - (py1 - py0) * 0.1,
+          px1 - (px1 - px0) * (tailLen / Math.hypot(px1 - px0, py1 - py0) || 0),
+          py1 - (py1 - py0) * (tailLen / Math.hypot(px1 - px0, py1 - py0) || 0)
+        );
+        grad.addColorStop(0, dark ? 'rgba(255,255,255,0.95)' : 'rgba(40,40,40,0.7)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(px0, py0);
+        ctx.lineTo(px1, py1);
+        ctx.stroke();
+        // bright head
+        ctx.fillStyle = dark ? 'rgba(255,255,255,1)' : 'rgba(20,20,20,0.85)';
+        ctx.beginPath();
+        ctx.arc(px1, py1, 1.6, 0, Math.PI * 2);
+        ctx.fill();
       }
 
       requestAnimationFrame(frame);
