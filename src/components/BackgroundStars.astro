@@ -22,9 +22,15 @@
   <div class="coord-actions">
     <button type="button" id="coord-origin">↺ Origin</button>
     <button type="button" id="coord-random">⤳ Random</button>
-    <button type="button" id="coord-pause">⏸ Pause drift</button>
+    <button type="button" id="coord-pause">⏸ Pause</button>
   </div>
-  <div class="coord-help">drift +z · velocity 1e15 m/s</div>
+  <div class="coord-actions">
+    <span class="coord-help" style="margin:0">speed</span>
+    <button type="button" class="coord-speed" data-mul="0.2">0.2×</button>
+    <button type="button" class="coord-speed" data-mul="1">1×</button>
+    <button type="button" class="coord-speed" data-mul="5">5×</button>
+    <button type="button" class="coord-speed" data-mul="20">20×</button>
+  </div>
 </aside>
 
 <style>
@@ -108,6 +114,10 @@
     border-color: var(--color-accent);
     color: var(--color-accent);
   }
+  .coord-speed-active {
+    border-color: var(--color-accent) !important;
+    color: var(--color-accent) !important;
+  }
   .coord-actions {
     margin-top: 6px;
     display: flex;
@@ -133,7 +143,8 @@
     const RENDER_DISTANCE = 1e17;   // meters — about 10.6 light-years
     const CHUNK_SIZE      = 2e16;   // meters — about 2.1 light-years per chunk
     const N_RADIUS        = Math.ceil(RENDER_DISTANCE / CHUNK_SIZE); // chunks in each axis
-    const DRIFT_V         = 1e15;   // m/s on +Z
+    let DRIFT_V           = 5e16;   // m/s on +Z (mutable via speed buttons)
+    const DRIFT_DEFAULT   = 5e16;
     const CACHE_LIMIT     = 50000;  // chunk cache hard limit
     const FOCAL_BASE      = 0.95;   // multiplier × max(w,h)
 
@@ -368,9 +379,19 @@
     if (btnPause) {
       btnPause.addEventListener('click', () => {
         drifting = !drifting;
-        btnPause.textContent = drifting ? '⏸ Pause drift' : '▶ Resume drift';
+        btnPause.textContent = drifting ? '⏸ Pause' : '▶ Resume';
       });
     }
+    document.querySelectorAll('.coord-speed').forEach((b) => {
+      b.addEventListener('click', () => {
+        const m = parseFloat(b.dataset.mul) || 1;
+        DRIFT_V = DRIFT_DEFAULT * m;
+        document.querySelectorAll('.coord-speed').forEach((x) => x.classList.toggle('coord-speed-active', x === b));
+      });
+    });
+    // Mark default active
+    const defaultSpeed = document.querySelector('.coord-speed[data-mul="1"]');
+    if (defaultSpeed) defaultSpeed.classList.add('coord-speed-active');
 
     // ===== render =====
     function project(dx, dy, dz) {
