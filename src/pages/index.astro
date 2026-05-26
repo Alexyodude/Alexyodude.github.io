@@ -1,6 +1,8 @@
 ---
 import '../styles/global.css';
 import BackgroundStars from '../components/BackgroundStars.astro';
+import NavBar from '../components/NavBar.astro';
+import SideMenu from '../components/SideMenu.astro';
 import Hero from '../components/Hero.astro';
 import About from '../components/About.astro';
 import FeaturedProjects from '../components/FeaturedProjects.astro';
@@ -33,13 +35,16 @@ import Footer from '../components/Footer.astro';
   </head>
   <body>
     <BackgroundStars />
+    <NavBar />
+    <SideMenu />
     <main>
-      <Hero />
-      <About />
-      <FeaturedProjects />
-      <Timeline />
-      <Art />
-      <AllProjects />
+      <div id="top"></div>
+      <section id="hero"><Hero /></section>
+      <section id="about"><About /></section>
+      <section id="featured"><FeaturedProjects /></section>
+      <section id="timeline"><Timeline /></section>
+      <section id="art"><Art /></section>
+      <section id="projects"><AllProjects /></section>
     </main>
     <Footer />
   </body>

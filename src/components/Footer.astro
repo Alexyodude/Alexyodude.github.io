@@ -1,11 +1,7 @@
 ---
-import ThemeToggle from './ThemeToggle.astro';
 const year = new Date().getFullYear();
 ---
 
 <footer class="px-6 py-10 max-w-3xl mx-auto border-t border-border mt-16">
-  <div class="flex items-center justify-between text-sm text-muted">
-    <span>© {year} Alex</span>
-    <ThemeToggle />
-  </div>
+  <div class="text-center text-sm text-muted">© {year} Alex</div>
 </footer>

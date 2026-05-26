@@ -1,0 +1,16 @@
+---
+import ThemeToggle from './ThemeToggle.astro';
+---
+
+<nav class="sticky top-0 z-30 bg-bg/80 backdrop-blur border-b border-border">
+  <div class="max-w-5xl mx-auto px-6 h-12 flex items-center justify-between text-sm">
+    <a href="/" class="font-semibold tracking-tight hover:text-accent">
+      Jihoon Park <span class="text-muted font-normal">(Alex)</span>
+    </a>
+    <div class="flex items-center gap-5">
+      <a href="/" class="text-muted hover:text-accent">Home</a>
+      <a href="/archive" class="text-muted hover:text-accent">Archive</a>
+      <ThemeToggle />
+    </div>
+  </div>
+</nav>

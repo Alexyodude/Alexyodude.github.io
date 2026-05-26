@@ -1,0 +1,92 @@
+---
+const items = [
+  { id: 'top',       label: 'Top' },
+  { id: 'about',     label: 'About' },
+  { id: 'featured',  label: 'Featured' },
+  { id: 'timeline',  label: 'Timeline' },
+  { id: 'art',       label: 'Art' },
+  { id: 'projects',  label: 'All Projects' },
+];
+---
+
+<aside
+  id="side-menu"
+  class="hidden lg:block fixed left-6 top-1/2 -translate-y-1/2 z-20"
+  aria-label="Section navigation"
+>
+  <ul class="space-y-2 text-xs">
+    {items.map((it) => (
+      <li>
+        <a
+          href={`#${it.id}`}
+          data-target={it.id}
+          class="side-menu-link group flex items-center gap-3 text-muted hover:text-accent transition-colors"
+        >
+          <span class="side-menu-dot inline-block h-1.5 w-1.5 rounded-full bg-muted transition-all"></span>
+          <span class="side-menu-label opacity-0 group-hover:opacity-100 transition-opacity tracking-wider uppercase">
+            {it.label}
+          </span>
+        </a>
+      </li>
+    ))}
+  </ul>
+</aside>
+
+<style>
+  .side-menu-link.active .side-menu-dot {
+    background: var(--color-accent);
+    transform: scale(1.6);
+  }
+  .side-menu-link.active .side-menu-label {
+    opacity: 1;
+    color: var(--color-fg);
+  }
+</style>
+
+<script is:inline>
+  (function () {
+    const links = Array.from(document.querySelectorAll('.side-menu-link'));
+    if (!links.length) return;
+    const map = new Map();
+    links.forEach((a) => {
+      const id = a.dataset.target;
+      const el = document.getElementById(id);
+      if (el) map.set(el, a);
+    });
+
+    let active = null;
+    function setActive(link) {
+      if (active === link) return;
+      if (active) active.classList.remove('active');
+      active = link;
+      if (active) active.classList.add('active');
+    }
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        // Pick the entry closest to the top of the viewport that is intersecting
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible.length) {
+          const link = map.get(visible[0].target);
+          if (link) setActive(link);
+        }
+      },
+      { rootMargin: '-30% 0px -60% 0px', threshold: 0 }
+    );
+    map.forEach((_, el) => io.observe(el));
+
+    // Smooth scroll on click (CSS handles via scroll-behavior; ensure consistent)
+    links.forEach((a) => {
+      a.addEventListener('click', (e) => {
+        const id = a.dataset.target;
+        const el = document.getElementById(id);
+        if (!el) return;
+        e.preventDefault();
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        history.replaceState(null, '', `#${id}`);
+      });
+    });
+  })();
+</script>

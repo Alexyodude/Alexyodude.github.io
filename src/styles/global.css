@@ -24,6 +24,8 @@ html {
   color: var(--color-fg);
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  scroll-behavior: smooth;
+  scroll-padding-top: 4rem;
 }
 
 body {
@@ -33,10 +35,14 @@ body {
 
 /* Keep page content above the fixed background canvas (z-index: 0) */
 body > main,
-body > footer {
+body > footer,
+body > nav,
+body > aside {
   position: relative;
   z-index: 1;
 }
+body > nav { z-index: 30; }
+body > aside { z-index: 20; }
 
 a {
   color: inherit;
