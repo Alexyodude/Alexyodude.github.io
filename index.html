@@ -10,7 +10,7 @@
         }
       })();
     </script><link rel="stylesheet" href="/_astro/archive.DhOpCJGz.css">
-<style>.side-menu-link[data-astro-cid-duny5ajy].active .side-menu-dot[data-astro-cid-duny5ajy]{background:var(--color-accent);transform:scale(1.6)}.side-menu-link[data-astro-cid-duny5ajy].active .side-menu-label[data-astro-cid-duny5ajy]{color:var(--color-fg)}.side-menu-link[data-astro-cid-duny5ajy].expanded .side-menu-caret[data-astro-cid-duny5ajy]{transform:rotate(90deg)}
+<style>.side-menu-link[data-astro-cid-duny5ajy].active .side-menu-dot[data-astro-cid-duny5ajy]{background:var(--color-accent);transform:scale(2);box-shadow:0 0 8px var(--color-accent)}.side-menu-link[data-astro-cid-duny5ajy].active .side-menu-label[data-astro-cid-duny5ajy]{color:var(--color-accent);font-weight:600}.side-menu-link[data-astro-cid-duny5ajy].expanded .side-menu-caret[data-astro-cid-duny5ajy]{transform:rotate(90deg)}
 </style></head> <body> <canvas id="bg-stars" aria-hidden="true" data-astro-cid-wtjyg2fu></canvas>  <script>
   (function () {
     const canvas = document.getElementById('bg-stars');
@@ -422,19 +422,35 @@ Jihoon Park <span class="text-muted font-normal">(Alex)</span> </a> <div class="
       }
     }
 
-    const io = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible.length) {
-          const link = map.get(visible[0].target);
-          if (link) setActive(link);
-        }
-      },
-      { rootMargin: '-25% 0px -60% 0px', threshold: 0 }
+    // Build [el, link] pairs in document order for scroll-spy
+    const entries = Array.from(map.entries()).sort(
+      (a, b) => a[0].getBoundingClientRect().top - b[0].getBoundingClientRect().top
     );
-    map.forEach((_, el) => io.observe(el));
+
+    function updateActive() {
+      const trigger = window.innerHeight * 0.35; // active when section top crosses 35% from viewport top
+      let current = entries[0];
+      for (const [el, link] of entries) {
+        if (el.getBoundingClientRect().top - trigger <= 0) current = [el, link];
+        else break;
+      }
+      if (current) setActive(current[1]);
+    }
+    let ticking = false;
+    window.addEventListener(
+      'scroll',
+      () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(() => {
+          updateActive();
+          ticking = false;
+        });
+      },
+      { passive: true }
+    );
+    window.addEventListener('resize', updateActive);
+    updateActive();
 
     // Click: expand if has children, then smooth scroll
     links.forEach((a) => {
