@@ -1,0 +1,25 @@
+---
+import timeline from '../content/timeline.json';
+
+type Entry = {
+  date: string;
+  title: string;
+  description: string;
+};
+
+const entries = timeline as Entry[];
+---
+
+<section class="px-6 py-16 max-w-3xl mx-auto">
+  <h2 class="text-sm uppercase tracking-widest text-muted">Timeline</h2>
+  <ol class="mt-8 relative border-l border-border ml-3">
+    {entries.map((e) => (
+      <li class="relative pl-8 pb-10 last:pb-0">
+        <span class="absolute -left-[7px] top-1.5 h-3 w-3 rounded-full bg-accent ring-4 ring-bg"></span>
+        <div class="text-xs uppercase tracking-widest text-muted">{e.date}</div>
+        <h3 class="mt-1 text-lg font-semibold">{e.title}</h3>
+        <p class="mt-1 text-sm text-muted">{e.description}</p>
+      </li>
+    ))}
+  </ol>
+</section>

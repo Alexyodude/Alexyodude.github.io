@@ -1,0 +1,22 @@
+[
+  {
+    "date": "2026",
+    "title": "Launched alexyodude.com",
+    "description": "Personal site built with Astro, hosted on GitHub Pages, fronted by Cloudflare."
+  },
+  {
+    "date": "2025",
+    "title": "Placeholder event",
+    "description": "Replace this with something real — a job, a project ship, a milestone."
+  },
+  {
+    "date": "2024",
+    "title": "Placeholder event",
+    "description": "Another timeline entry. Add as many as you want."
+  },
+  {
+    "date": "2023",
+    "title": "Placeholder event",
+    "description": "Older entries appear further down the timeline."
+  }
+]
