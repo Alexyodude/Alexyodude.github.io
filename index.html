@@ -422,15 +422,14 @@ Jihoon Park <span class="text-muted font-normal">(Alex)</span> </a> <div class="
       }
     }
 
-    // Build [el, link] pairs in document order for scroll-spy
-    const entries = Array.from(map.entries()).sort(
-      (a, b) => a[0].getBoundingClientRect().top - b[0].getBoundingClientRect().top
-    );
-
     function updateActive() {
-      const trigger = window.innerHeight * 0.35; // active when section top crosses 35% from viewport top
-      let current = entries[0];
-      for (const [el, link] of entries) {
+      const trigger = window.innerHeight * 0.35;
+      // Recompute every call so image-load layout shifts don't desync ordering
+      const sorted = Array.from(map.entries()).sort(
+        (a, b) => a[0].getBoundingClientRect().top - b[0].getBoundingClientRect().top
+      );
+      let current = sorted[0] || null;
+      for (const [el, link] of sorted) {
         if (el.getBoundingClientRect().top - trigger <= 0) current = [el, link];
         else break;
       }
@@ -450,6 +449,7 @@ Jihoon Park <span class="text-muted font-normal">(Alex)</span> </a> <div class="
       { passive: true }
     );
     window.addEventListener('resize', updateActive);
+    window.addEventListener('load', updateActive);
     updateActive();
 
     // Click: expand if has children, then smooth scroll
