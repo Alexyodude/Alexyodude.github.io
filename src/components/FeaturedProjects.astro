@@ -10,6 +10,21 @@ type FeaturedProject = {
 };
 
 const projects = featured as FeaturedProject[];
+
+function primaryLabel(url: string): string {
+  try {
+    const host = new URL(url, 'https://x').hostname;
+    if (host.includes('github.com')) return 'Repo';
+    return 'Site';
+  } catch {
+    return 'Link';
+  }
+}
+
+function secondaryLabel(url: string): string {
+  if (url.endsWith('.exe') || url.endsWith('.zip') || url.endsWith('.dmg')) return 'Download';
+  return 'Demo';
+}
 ---
 
 <section class="px-6 py-16 max-w-3xl mx-auto">
@@ -23,9 +38,9 @@ const projects = featured as FeaturedProject[];
           {p.tags.map((t) => (<li class="border border-border rounded px-2 py-0.5">{t}</li>))}
         </ul>
         <div class="mt-4 flex gap-4 text-sm">
-          <a href={p.repo} class="underline decoration-muted underline-offset-4 hover:text-accent hover:decoration-accent">Repo</a>
+          <a href={p.repo} class="underline decoration-muted underline-offset-4 hover:text-accent hover:decoration-accent">{primaryLabel(p.repo)}</a>
           {p.demo && (
-            <a href={p.demo} class="underline decoration-muted underline-offset-4 hover:text-accent hover:decoration-accent">Demo</a>
+            <a href={p.demo} class="underline decoration-muted underline-offset-4 hover:text-accent hover:decoration-accent">{secondaryLabel(p.demo)}</a>
           )}
         </div>
       </li>
