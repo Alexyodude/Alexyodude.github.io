@@ -9,16 +9,61 @@
           document.documentElement.setAttribute('data-theme', 'light');
         }
       })();
-    </script><link rel="stylesheet" href="/_astro/archive.DhOpCJGz.css">
+    </script><link rel="stylesheet" href="/_astro/archive.Bq91_S-d.css">
 <style>.side-menu-link[data-astro-cid-duny5ajy].active .side-menu-dot[data-astro-cid-duny5ajy]{background-color:var(--color-accent)!important;transform:scale(2);box-shadow:0 0 8px var(--color-accent)}.side-menu-link[data-astro-cid-duny5ajy].active .side-menu-label[data-astro-cid-duny5ajy]{color:var(--color-accent)!important;font-weight:600}.side-menu-link[data-astro-cid-duny5ajy].expanded .side-menu-caret[data-astro-cid-duny5ajy]{transform:rotate(90deg)}
-</style></head> <body> <canvas id="bg-stars" aria-hidden="true" data-astro-cid-wtjyg2fu></canvas>  <script>
-  (function () {
+</style></head> <body> <canvas id="bg-stars" aria-hidden="true" data-astro-cid-wtjyg2fu></canvas> <aside id="coord-panel" class="hidden md:block" data-astro-cid-wtjyg2fu> <div class="coord-panel-title" data-astro-cid-wtjyg2fu>COORDINATES (m)</div> <div class="coord-rows" data-astro-cid-wtjyg2fu> <div data-astro-cid-wtjyg2fu><span data-astro-cid-wtjyg2fu>x</span><b id="coord-x" data-astro-cid-wtjyg2fu>0</b></div> <div data-astro-cid-wtjyg2fu><span data-astro-cid-wtjyg2fu>y</span><b id="coord-y" data-astro-cid-wtjyg2fu>0</b></div> <div data-astro-cid-wtjyg2fu><span data-astro-cid-wtjyg2fu>z</span><b id="coord-z" data-astro-cid-wtjyg2fu>0</b></div> </div> <form id="coord-form" class="coord-form" autocomplete="off" data-astro-cid-wtjyg2fu> <input id="coord-input" placeholder="x, y, z" aria-label="Teleport coordinates" spellcheck="false" data-astro-cid-wtjyg2fu> <button type="submit" data-astro-cid-wtjyg2fu>Go</button> </form> <div class="coord-actions" data-astro-cid-wtjyg2fu> <button type="button" id="coord-origin" data-astro-cid-wtjyg2fu>↺ Origin</button> <button type="button" id="coord-random" data-astro-cid-wtjyg2fu>⤳ Random</button> <button type="button" id="coord-pause" data-astro-cid-wtjyg2fu>⏸ Pause drift</button> </div> <div class="coord-help" data-astro-cid-wtjyg2fu>drift +z · velocity 1e15 m/s</div> </aside>  <script>
+(function () {
+  function init() {
     const canvas = document.getElementById('bg-stars');
     if (!canvas) return;
     const ctx = canvas.getContext('2d', { alpha: true });
 
-    // ---------- deterministic PRNG ----------
-    function rng(seed) {
+    // ===== world constants =====
+    const STORAGE_KEY = 'universe.cam.v2';
+    const RENDER_DISTANCE = 1e17;   // meters — about 10.6 light-years
+    const CHUNK_SIZE      = 2e16;   // meters — about 2.1 light-years per chunk
+    const N_RADIUS        = Math.ceil(RENDER_DISTANCE / CHUNK_SIZE); // chunks in each axis
+    const DRIFT_V         = 1e15;   // m/s on +Z
+    const CACHE_LIMIT     = 50000;  // chunk cache hard limit
+    const FOCAL_BASE      = 0.95;   // multiplier × max(w,h)
+
+    // ===== state =====
+    let cam = readInitial();
+    let drifting = true;
+    let lastFrameMs = performance.now();
+    let lastSavedMs = 0;
+    const chunkCache = new Map();
+
+    function readInitial() {
+      try {
+        const u = new URLSearchParams(location.search);
+        if (u.has('x') && u.has('y') && u.has('z')) {
+          const a = ['x', 'y', 'z'].map((k) => parseFloat(u.get(k)));
+          if (a.every(Number.isFinite)) return a;
+        }
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const p = JSON.parse(stored);
+          if (Array.isArray(p) && p.length === 3 && p.every(Number.isFinite)) return p;
+        }
+      } catch {}
+      return [0, 0, 0];
+    }
+
+    function savePosition() {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cam)); } catch {}
+    }
+
+    // ===== deterministic PRNG seeded from chunk coords =====
+    function hashChunk(x, y, z) {
+      let h = 0xA1EC0DE >>> 0;
+      h = Math.imul(h ^ (x | 0), 0x85EBCA6B) >>> 0;
+      h = Math.imul(h ^ (y | 0), 0xC2B2AE35) >>> 0;
+      h = Math.imul(h ^ (z | 0), 0x27D4EB2F) >>> 0;
+      h = (h ^ (h >>> 16)) >>> 0;
+      return h || 1;
+    }
+    function mulberry32(seed) {
       let s = seed >>> 0;
       return function () {
         s = (s + 0x6D2B79F5) >>> 0;
@@ -29,24 +74,19 @@
       };
     }
 
-    const SEED = 0xA1EC0DE;
-    const Z_NEAR = 1;
-    const Z_FAR = 1200;
-
-    // ---------- Stars with realistic spectral class distribution ----------
-    // Visually-weighted distribution (real M dwarfs are 76% but mostly invisible;
-    // we bias toward what you'd actually SEE in a dark sky).
-    // [class, color, weight, baseSize]
+    // ===== object types =====
+    // Spectral classes, visually-weighted (real M dwarfs dominate by count but
+    // are dim — we bias toward what'd actually appear in a dark sky).
     const SPECTRAL = [
-      ['O',  [155, 176, 255], 0.005, 1.6],
-      ['B',  [170, 191, 255], 0.04,  1.4],
+      ['O',  [155, 176, 255], 0.005, 1.7],
+      ['B',  [170, 191, 255], 0.04,  1.45],
       ['A',  [202, 215, 255], 0.08,  1.2],
       ['F',  [248, 247, 255], 0.12,  1.05],
       ['G',  [255, 244, 234], 0.18,  1.0],
-      ['K',  [255, 210, 161], 0.27,  0.9],
-      ['M',  [255, 160, 110], 0.385, 0.7],
+      ['K',  [255, 210, 161], 0.27,  0.88],
+      ['M',  [255, 160, 110], 0.305, 0.68],
     ];
-    function pickClass(r) {
+    function pickSpectral(r) {
       let acc = 0;
       for (const c of SPECTRAL) {
         acc += c[2];
@@ -55,151 +95,99 @@
       return SPECTRAL[SPECTRAL.length - 1];
     }
 
-    const STAR_COUNT = 1800;
-    const rand = rng(SEED);
-    // x, y, z, brightness, r, g, b, sizeBase
-    const stars = new Float32Array(STAR_COUNT * 8);
-    for (let i = 0; i < STAR_COUNT; i++) {
-      stars[i * 8 + 0] = (rand() - 0.5) * 2;
-      stars[i * 8 + 1] = (rand() - 0.5) * 2;
-      stars[i * 8 + 2] = Z_NEAR + rand() * (Z_FAR - Z_NEAR);
-      stars[i * 8 + 3] = 0.3 + rand() * 0.7;
-      const cls = pickClass(rand());
-      stars[i * 8 + 4] = cls[1][0];
-      stars[i * 8 + 5] = cls[1][1];
-      stars[i * 8 + 6] = cls[1][2];
-      stars[i * 8 + 7] = cls[3];
-    }
-
-    // ---------- Nebulae: large soft gradient bitmaps (pre-rendered) ----------
-    const NEBULA_PALETTE = [
-      [180, 100, 220], // purple
-      [220, 90, 150],  // magenta
-      [80, 160, 230],  // cyan-blue
-      [230, 110, 90],  // warm coral
-      [120, 200, 180], // teal
-    ];
-    const NEBULA_COUNT = 8;
-    const nebulae = [];
-    for (let i = 0; i < NEBULA_COUNT; i++) {
-      const color = NEBULA_PALETTE[Math.floor(rand() * NEBULA_PALETTE.length)];
-      const off = document.createElement('canvas');
-      const size = 256 + Math.floor(rand() * 256);
-      off.width = size;
-      off.height = size;
-      const octx = off.getContext('2d');
-      const g = octx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-      g.addColorStop(0,    `rgba(${color[0]},${color[1]},${color[2]},0.22)`);
-      g.addColorStop(0.4,  `rgba(${color[0]},${color[1]},${color[2]},0.07)`);
-      g.addColorStop(1,    `rgba(${color[0]},${color[1]},${color[2]},0)`);
-      octx.fillStyle = g;
-      octx.fillRect(0, 0, size, size);
-      nebulae.push({
-        x: (rand() - 0.5) * 2,
-        y: (rand() - 0.5) * 2,
-        z: Z_NEAR + rand() * (Z_FAR - Z_NEAR),
-        scale: 0.4 + rand() * 0.8,
-        sprite: off,
-      });
-    }
-
-    // ---------- Black holes: small dark disc + bright accretion ring (pre-rendered) ----------
-    const BH_COUNT = 3;
-    const blackHoles = [];
-    for (let i = 0; i < BH_COUNT; i++) {
-      const off = document.createElement('canvas');
-      const size = 200;
-      off.width = size;
-      off.height = size;
-      const octx = off.getContext('2d');
-      const cx0 = size / 2, cy0 = size / 2;
-      // Outer halo / gravitational lensing glow
-      const halo = octx.createRadialGradient(cx0, cy0, 14, cx0, cy0, size / 2);
-      halo.addColorStop(0,   'rgba(255,180,90,0.45)');
-      halo.addColorStop(0.2, 'rgba(255,120,40,0.18)');
-      halo.addColorStop(0.5, 'rgba(120,60,200,0.08)');
-      halo.addColorStop(1,   'rgba(0,0,0,0)');
-      octx.fillStyle = halo;
-      octx.fillRect(0, 0, size, size);
-      // Bright accretion ring
-      octx.strokeStyle = 'rgba(255,210,140,0.85)';
-      octx.lineWidth = 2.5;
-      octx.beginPath();
-      octx.arc(cx0, cy0, 16, 0, Math.PI * 2);
-      octx.stroke();
-      // Pitch-black event horizon
-      octx.fillStyle = '#000';
-      octx.beginPath();
-      octx.arc(cx0, cy0, 12, 0, Math.PI * 2);
-      octx.fill();
-      blackHoles.push({
-        x: (rand() - 0.5) * 1.5,
-        y: (rand() - 0.5) * 1.5,
-        z: Z_NEAR + rand() * (Z_FAR - Z_NEAR),
-        scale: 0.6 + rand() * 0.6,
-        sprite: off,
-      });
-    }
-
-    // ---------- Planets: small colored discs, one with rings ----------
     const PLANET_PALETTE = [
-      { core: [180, 120, 80],  ring: null },         // rocky
-      { core: [200, 180, 130], ring: [210, 190, 140] }, // ringed
-      { core: [110, 160, 220], ring: null },         // ice giant
-      { core: [200, 90, 80],   ring: null },         // mars-like
-      { core: [230, 220, 200], ring: null },         // pale
+      [180, 120, 80],   // rocky brown
+      [200, 180, 130],  // sandy
+      [110, 160, 220],  // ice/water
+      [200, 90, 80],    // mars-red
+      [230, 220, 200],  // pale
     ];
-    const PLANET_COUNT = 5;
-    const planets = [];
-    for (let i = 0; i < PLANET_COUNT; i++) {
-      const p = PLANET_PALETTE[Math.floor(rand() * PLANET_PALETTE.length)];
-      planets.push({
-        x: (rand() - 0.5) * 2,
-        y: (rand() - 0.5) * 2,
-        z: Z_NEAR + rand() * (Z_FAR - Z_NEAR),
-        radius: 2.5 + rand() * 3,
-        core: p.core,
-        ring: p.ring,
-      });
-    }
+    const NEBULA_PALETTE = [
+      [180, 100, 220],
+      [220, 90, 150],
+      [80, 160, 230],
+      [230, 110, 90],
+      [120, 200, 180],
+    ];
 
-    // ---------- Comets: scheduled deterministically from wall clock ----------
-    const COMET_PERIOD_MS = 14000; // a comet every ~14s globally
-    function activeComets(nowMs) {
-      // For each recent epoch, decide if a comet is active and what its path is.
+    // ===== chunk generator =====
+    function generateChunk(chx, chy, chz) {
+      const r = mulberry32(hashChunk(chx, chy, chz));
+      const cellRoll = r();
+      // Most chunks empty — realistic interstellar sparsity
+      let count = 0;
+      if (cellRoll < 0.55) count = 0;
+      else if (cellRoll < 0.92) count = 1;
+      else if (cellRoll < 0.99) count = 2;
+      else count = 3;
+
       const out = [];
-      const epoch = Math.floor(nowMs / COMET_PERIOD_MS);
-      for (let e = epoch - 1; e <= epoch; e++) {
-        const r = rng(SEED ^ (e * 2654435761));
-        const startX = r() * 1.4 - 0.7;
-        const startY = r() * 1.4 - 0.7;
-        const dx = (r() - 0.5) * 0.6;
-        const dy = (r() - 0.5) * 0.6;
-        const z = 100 + r() * 300; // somewhat near
-        const dur = 1200 + r() * 1500;
-        const startMs = e * COMET_PERIOD_MS;
-        const t = (nowMs - startMs) / dur;
-        if (t > 0 && t < 1) {
-          out.push({ startX, startY, dx, dy, z, t });
+      for (let i = 0; i < count; i++) {
+        const wx = chx * CHUNK_SIZE + r() * CHUNK_SIZE;
+        const wy = chy * CHUNK_SIZE + r() * CHUNK_SIZE;
+        const wz = chz * CHUNK_SIZE + r() * CHUNK_SIZE;
+        const t = r();
+        const obj = { wx, wy, wz };
+        if (t < 0.85) {
+          const cls = pickSpectral(r());
+          obj.type = 'star';
+          obj.cr = cls[1][0];
+          obj.cg = cls[1][1];
+          obj.cb = cls[1][2];
+          obj.sizeMul = cls[3];
+          obj.bri = 0.5 + r() * 0.5;
+        } else if (t < 0.95) {
+          const p = PLANET_PALETTE[Math.floor(r() * PLANET_PALETTE.length)];
+          obj.type = 'planet';
+          obj.cr = p[0]; obj.cg = p[1]; obj.cb = p[2];
+          obj.radius = 1.2 + r() * 3.5;
+          obj.hasRing = r() < 0.18;
+        } else if (t < 0.992) {
+          const n = NEBULA_PALETTE[Math.floor(r() * NEBULA_PALETTE.length)];
+          obj.type = 'nebula';
+          obj.cr = n[0]; obj.cg = n[1]; obj.cb = n[2];
+          obj.scale = 0.6 + r() * 1.4;
+        } else {
+          obj.type = 'blackhole';
+          obj.scale = 0.5 + r() * 0.6;
         }
+        out.push(obj);
       }
       return out;
     }
 
-    // ---------- Viewport ----------
-    let w = 0, h = 0, cx = 0, cy = 0, dpr = 1, focal = 0;
+    function getChunk(chx, chy, chz) {
+      const k = chx + '|' + chy + '|' + chz;
+      let v = chunkCache.get(k);
+      if (!v) {
+        v = generateChunk(chx, chy, chz);
+        if (chunkCache.size >= CACHE_LIMIT) {
+          // Lazy eviction: drop oldest 20%
+          let i = 0;
+          const toDrop = Math.floor(CACHE_LIMIT * 0.2);
+          for (const key of chunkCache.keys()) {
+            if (i++ >= toDrop) break;
+            chunkCache.delete(key);
+          }
+        }
+        chunkCache.set(k, v);
+      }
+      return v;
+    }
+
+    // ===== viewport =====
+    let W = 0, H = 0, cx = 0, cy = 0, dpr = 1, focal = 0;
     function resize() {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
-      w = window.innerWidth;
-      h = window.innerHeight;
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-      canvas.style.width = w + 'px';
-      canvas.style.height = h + 'px';
+      W = window.innerWidth;
+      H = window.innerHeight;
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      cx = w / 2;
-      cy = h / 2;
-      focal = Math.max(w, h) * 0.9;
+      cx = W / 2; cy = H / 2;
+      focal = Math.max(W, H) * FOCAL_BASE;
     }
     resize();
     window.addEventListener('resize', resize);
@@ -208,138 +196,230 @@
       return document.documentElement.getAttribute('data-theme') === 'dark';
     }
 
-    // ---------- Projection ----------
-    function project(x, y, z, camZ) {
-      let pz = z - camZ;
-      if (pz < Z_NEAR) pz += Z_FAR;
-      const k = focal / pz;
-      const px = cx + x * k * 400;
-      const py = cy + y * k * 400;
-      return [px, py, pz, k];
+    // ===== UI =====
+    const elX = document.getElementById('coord-x');
+    const elY = document.getElementById('coord-y');
+    const elZ = document.getElementById('coord-z');
+    const inp = document.getElementById('coord-input');
+    const form = document.getElementById('coord-form');
+    const btnOrigin = document.getElementById('coord-origin');
+    const btnRandom = document.getElementById('coord-random');
+    const btnPause = document.getElementById('coord-pause');
+
+    function fmt(n) {
+      if (!Number.isFinite(n)) return '—';
+      const a = Math.abs(n);
+      if (a < 1000) return n.toFixed(0);
+      return n.toExponential(3);
+    }
+    function refreshUI() {
+      if (!elX) return;
+      elX.textContent = fmt(cam[0]);
+      elY.textContent = fmt(cam[1]);
+      elZ.textContent = fmt(cam[2]);
+    }
+    refreshUI();
+
+    function teleport(x, y, z) {
+      cam = [x, y, z];
+      refreshUI();
+      savePosition();
     }
 
-    // ---------- Render loop ----------
-    function frame() {
-      const nowMs = Date.now();
-      const t = nowMs * 0.00006;
-      const camZ = (t * Z_FAR) % Z_FAR;
+    if (form) {
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const raw = (inp.value || '').trim();
+        if (!raw) return;
+        const parts = raw.split(/[\s,]+/).map(Number);
+        if (parts.length !== 3 || !parts.every(Number.isFinite)) {
+          inp.style.borderColor = '#dc2626';
+          setTimeout(() => { inp.style.borderColor = ''; }, 1200);
+          return;
+        }
+        teleport(parts[0], parts[1], parts[2]);
+        inp.value = '';
+      });
+    }
+    if (btnOrigin) {
+      btnOrigin.addEventListener('click', () => teleport(0, 0, 0));
+    }
+    if (btnRandom) {
+      btnRandom.addEventListener('click', () => {
+        // Jump to a random spot within a meaningful range
+        const span = 1e18;
+        teleport(
+          (Math.random() - 0.5) * span,
+          (Math.random() - 0.5) * span,
+          (Math.random() - 0.5) * span
+        );
+      });
+    }
+    if (btnPause) {
+      btnPause.addEventListener('click', () => {
+        drifting = !drifting;
+        btnPause.textContent = drifting ? '⏸ Pause drift' : '▶ Resume drift';
+      });
+    }
 
-      ctx.clearRect(0, 0, w, h);
+    // ===== render =====
+    function project(dx, dy, dz) {
+      if (dz <= 1e6) return null; // behind/near plane (1 Mm)
+      const k = focal / (dz / 1e15); // scale so that ~1e15 m maps reasonably
+      return { px: cx + dx / 1e15 * k, py: cy + dy / 1e15 * k, k, dz };
+    }
+
+    function drawStar(px, py, color, alpha, size) {
+      ctx.fillStyle = `rgba(${color},${alpha.toFixed(3)})`;
+      ctx.fillRect(px - size / 2, py - size / 2, size, size);
+    }
+
+    function frame(nowMs) {
+      const dt = Math.min(0.1, (nowMs - lastFrameMs) / 1000);
+      lastFrameMs = nowMs;
+      if (drifting) cam[2] += DRIFT_V * dt;
+      if (nowMs - lastSavedMs > 500) {
+        savePosition();
+        refreshUI();
+        lastSavedMs = nowMs;
+      }
+
+      ctx.clearRect(0, 0, W, H);
       const dark = isDark();
-      // Soft fill so the bg color shows but with a slight tint for depth
-      // (only in light mode, dark mode is already black)
+      // soft tint in light mode so stars read
       if (!dark) {
         ctx.fillStyle = 'rgba(245,247,250,0.5)';
-        ctx.fillRect(0, 0, w, h);
+        ctx.fillRect(0, 0, W, H);
       }
 
-      // 1. Nebulae (background bloom, additive)
-      ctx.globalCompositeOperation = dark ? 'lighter' : 'multiply';
-      for (const n of nebulae) {
-        const [px, py, pz, k] = project(n.x, n.y, n.z, camZ);
-        const size = n.sprite.width * k * n.scale;
-        if (size < 8 || size > 6000) continue;
-        if (px + size < 0 || px - size > w || py + size < 0 || py - size > h) continue;
-        ctx.drawImage(n.sprite, px - size / 2, py - size / 2, size, size);
-      }
-      ctx.globalCompositeOperation = 'source-over';
+      const ccx = Math.floor(cam[0] / CHUNK_SIZE);
+      const ccy = Math.floor(cam[1] / CHUNK_SIZE);
+      const ccz = Math.floor(cam[2] / CHUNK_SIZE);
 
-      // 2. Stars
-      for (let i = 0; i < STAR_COUNT; i++) {
-        const sx = stars[i * 8 + 0];
-        const sy = stars[i * 8 + 1];
-        const [px, py, pz, k] = project(sx, sy, stars[i * 8 + 2], camZ);
-        if (px < -10 || px > w + 10 || py < -10 || py > h + 10) continue;
-        const depth = 1 - pz / Z_FAR;
-        const size = Math.max(0.5, depth * 2.8 * stars[i * 8 + 7]);
-        const alpha = stars[i * 8 + 3] * (0.18 + depth * 0.78);
-        const r = stars[i * 8 + 4] | 0;
-        const g = stars[i * 8 + 5] | 0;
-        const b = stars[i * 8 + 6] | 0;
-        if (dark) {
-          ctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
-        } else {
-          // invert luminance for light mode: darken in proportion
-          const ir = Math.floor(255 - (255 - r) * 0.3);
-          const ig = Math.floor(255 - (255 - g) * 0.3);
-          const ib = Math.floor(255 - (255 - b) * 0.3);
-          ctx.fillStyle = `rgba(${Math.min(255 - ir, 60)},${Math.min(255 - ig, 60)},${Math.min(255 - ib, 60)},${(alpha * 0.55).toFixed(3)})`;
+      // Iterate chunks in front of camera (plus small back margin for objects just passed)
+      const minDz = -1;
+      const maxDz = N_RADIUS;
+      const renderD2 = RENDER_DISTANCE * RENDER_DISTANCE;
+
+      // Two-pass: nebulae & black holes drawn separately to handle compositing
+      const nebulaeDraw = [];
+      const blackHolesDraw = [];
+
+      for (let dx = -N_RADIUS; dx <= N_RADIUS; dx++) {
+        for (let dy = -N_RADIUS; dy <= N_RADIUS; dy++) {
+          for (let dz = minDz; dz <= maxDz; dz++) {
+            const chx = ccx + dx;
+            const chy = ccy + dy;
+            const chz = ccz + dz;
+            const objs = getChunk(chx, chy, chz);
+            if (!objs.length) continue;
+            for (const obj of objs) {
+              const ox = obj.wx - cam[0];
+              const oy = obj.wy - cam[1];
+              const oz = obj.wz - cam[2];
+              const d2 = ox * ox + oy * oy + oz * oz;
+              if (d2 > renderD2) continue;
+              const proj = project(ox, oy, oz);
+              if (!proj) continue;
+              if (proj.px < -50 || proj.px > W + 50 || proj.py < -50 || proj.py > H + 50) continue;
+
+              const dist = Math.sqrt(d2);
+              const depth = 1 - dist / RENDER_DISTANCE; // 0 (far) → 1 (near)
+
+              if (obj.type === 'star') {
+                const size = Math.max(0.5, depth * 3.2 * obj.sizeMul);
+                const a = obj.bri * (0.15 + depth * 0.8);
+                if (dark) {
+                  drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, a, size);
+                } else {
+                  const rr = Math.min(60, Math.floor(255 - obj.cr) * 0.3 | 0);
+                  const gg = Math.min(60, Math.floor(255 - obj.cg) * 0.3 | 0);
+                  const bb = Math.min(60, Math.floor(255 - obj.cb) * 0.3 | 0);
+                  drawStar(proj.px, proj.py, `${rr},${gg},${bb}`, a * 0.6, size);
+                }
+              } else if (obj.type === 'planet') {
+                const rad = obj.radius * depth * 1.6;
+                if (rad < 0.8) {
+                  drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, 0.6 * depth, Math.max(0.6, rad));
+                } else {
+                  const grad = ctx.createRadialGradient(proj.px - rad * 0.35, proj.py - rad * 0.35, 0, proj.px, proj.py, rad);
+                  grad.addColorStop(0, `rgba(${obj.cr + 30},${obj.cg + 30},${obj.cb + 30},${(0.95 * depth + 0.05).toFixed(2)})`);
+                  grad.addColorStop(0.75, `rgba(${obj.cr},${obj.cg},${obj.cb},${(0.8 * depth + 0.1).toFixed(2)})`);
+                  grad.addColorStop(1, `rgba(${(obj.cr * 0.5) | 0},${(obj.cg * 0.5) | 0},${(obj.cb * 0.5) | 0},${(0.6 * depth + 0.1).toFixed(2)})`);
+                  ctx.fillStyle = grad;
+                  ctx.beginPath();
+                  ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2);
+                  ctx.fill();
+                  if (obj.hasRing && rad > 2) {
+                    ctx.strokeStyle = `rgba(${obj.cr},${obj.cg},${obj.cb},${(0.5 * depth).toFixed(2)})`;
+                    ctx.lineWidth = Math.max(0.6, rad * 0.18);
+                    ctx.beginPath();
+                    ctx.ellipse(proj.px, proj.py, rad * 1.7, rad * 0.45, 0.4, 0, Math.PI * 2);
+                    ctx.stroke();
+                  }
+                }
+              } else if (obj.type === 'nebula') {
+                nebulaeDraw.push({ proj, obj, depth });
+              } else if (obj.type === 'blackhole') {
+                blackHolesDraw.push({ proj, obj, depth });
+              }
+            }
+          }
         }
-        ctx.fillRect(px - size / 2, py - size / 2, size, size);
       }
 
-      // 3. Planets
-      for (const pl of planets) {
-        const [px, py, pz, k] = project(pl.x, pl.y, pl.z, camZ);
-        if (pz <= 0) continue;
-        const depth = 1 - pz / Z_FAR;
-        const rad = pl.radius * k * 0.5;
-        if (rad < 1.2) continue;
-        if (px + rad < 0 || px - rad > w || py + rad < 0 || py - rad > h) continue;
-        const [r, g, b] = pl.core;
-        // Sphere shading
-        const grad = ctx.createRadialGradient(px - rad * 0.35, py - rad * 0.35, 0, px, py, rad);
-        grad.addColorStop(0,   `rgba(${r + 30},${g + 30},${b + 30},${(0.95 * depth + 0.05).toFixed(2)})`);
-        grad.addColorStop(0.75,`rgba(${r},${g},${b},${(0.8 * depth + 0.1).toFixed(2)})`);
-        grad.addColorStop(1,   `rgba(${(r * 0.5) | 0},${(g * 0.5) | 0},${(b * 0.5) | 0},${(0.6 * depth + 0.1).toFixed(2)})`);
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(px, py, rad, 0, Math.PI * 2);
-        ctx.fill();
-        if (pl.ring && rad > 2) {
-          const [rr, rg, rb] = pl.ring;
-          ctx.strokeStyle = `rgba(${rr},${rg},${rb},${(0.6 * depth).toFixed(2)})`;
-          ctx.lineWidth = Math.max(0.6, rad * 0.18);
-          ctx.beginPath();
-          ctx.ellipse(px, py, rad * 1.7, rad * 0.45, 0.4, 0, Math.PI * 2);
-          ctx.stroke();
+      // Nebulae layer (additive in dark, multiply in light)
+      if (nebulaeDraw.length) {
+        ctx.globalCompositeOperation = dark ? 'lighter' : 'multiply';
+        for (const n of nebulaeDraw) {
+          const r = 200 * n.depth * n.obj.scale;
+          if (r < 8) continue;
+          const grad = ctx.createRadialGradient(n.proj.px, n.proj.py, 0, n.proj.px, n.proj.py, r);
+          grad.addColorStop(0,   `rgba(${n.obj.cr},${n.obj.cg},${n.obj.cb},0.22)`);
+          grad.addColorStop(0.4, `rgba(${n.obj.cr},${n.obj.cg},${n.obj.cb},0.07)`);
+          grad.addColorStop(1,   `rgba(${n.obj.cr},${n.obj.cg},${n.obj.cb},0)`);
+          ctx.fillStyle = grad;
+          ctx.fillRect(n.proj.px - r, n.proj.py - r, r * 2, r * 2);
         }
+        ctx.globalCompositeOperation = 'source-over';
       }
 
-      // 4. Black holes (on top, with their accretion glow)
-      for (const bh of blackHoles) {
-        const [px, py, pz, k] = project(bh.x, bh.y, bh.z, camZ);
-        if (pz <= 0) continue;
-        const size = bh.sprite.width * k * bh.scale * 0.5;
-        if (size < 10 || size > 600) continue;
-        if (px + size < 0 || px - size > w || py + size < 0 || py - size > h) continue;
-        ctx.drawImage(bh.sprite, px - size / 2, py - size / 2, size, size);
-      }
-
-      // 5. Comets (streaks)
-      const cs = activeComets(nowMs);
-      for (const c of cs) {
-        const x0 = c.startX, y0 = c.startY;
-        const x1 = c.startX + c.dx * c.t;
-        const y1 = c.startY + c.dy * c.t;
-        const [px0, py0] = project(x0, y0, c.z, camZ);
-        const [px1, py1] = project(x1, y1, c.z, camZ);
-        const tailLen = 60;
-        // streak
-        const grad = ctx.createLinearGradient(
-          px1 - (px1 - px0) * 0.1, py1 - (py1 - py0) * 0.1,
-          px1 - (px1 - px0) * (tailLen / Math.hypot(px1 - px0, py1 - py0) || 0),
-          py1 - (py1 - py0) * (tailLen / Math.hypot(px1 - px0, py1 - py0) || 0)
-        );
-        grad.addColorStop(0, dark ? 'rgba(255,255,255,0.95)' : 'rgba(40,40,40,0.7)');
-        grad.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.strokeStyle = grad;
-        ctx.lineWidth = 1.6;
+      // Black holes (drawn last)
+      for (const bh of blackHolesDraw) {
+        const r = 18 * bh.depth * bh.obj.scale;
+        if (r < 3) continue;
+        const halo = ctx.createRadialGradient(bh.proj.px, bh.proj.py, r * 0.5, bh.proj.px, bh.proj.py, r * 5);
+        halo.addColorStop(0,   'rgba(255,180,90,0.5)');
+        halo.addColorStop(0.2, 'rgba(255,120,40,0.2)');
+        halo.addColorStop(0.5, 'rgba(120,60,200,0.08)');
+        halo.addColorStop(1,   'rgba(0,0,0,0)');
+        ctx.fillStyle = halo;
+        ctx.fillRect(bh.proj.px - r * 5, bh.proj.py - r * 5, r * 10, r * 10);
+        ctx.strokeStyle = 'rgba(255,210,140,0.85)';
+        ctx.lineWidth = Math.max(1, r * 0.18);
         ctx.beginPath();
-        ctx.moveTo(px0, py0);
-        ctx.lineTo(px1, py1);
+        ctx.arc(bh.proj.px, bh.proj.py, r * 0.75, 0, Math.PI * 2);
         ctx.stroke();
-        // bright head
-        ctx.fillStyle = dark ? 'rgba(255,255,255,1)' : 'rgba(20,20,20,0.85)';
+        ctx.fillStyle = '#000';
         ctx.beginPath();
-        ctx.arc(px1, py1, 1.6, 0, Math.PI * 2);
+        ctx.arc(bh.proj.px, bh.proj.py, r * 0.55, 0, Math.PI * 2);
         ctx.fill();
       }
 
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
-  })();
+
+    // Save on unload too
+    window.addEventListener('beforeunload', savePosition);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
 </script> <nav class="sticky top-0 z-30 bg-bg/80 backdrop-blur border-b border-border"> <div class="max-w-5xl mx-auto px-6 h-12 flex items-center justify-between text-sm"> <a href="/" class="font-semibold tracking-tight hover:text-accent">
 Jihoon Park <span class="text-muted font-normal">(Alex)</span> </a> <div class="flex items-center gap-5"> <a href="/" class="text-muted hover:text-accent">Home</a> <button id="theme-toggle" type="button" aria-label="Toggle color theme" class="rounded p-2 text-fg hover:bg-border transition-colors"> <svg id="theme-icon-sun" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"> <circle cx="12" cy="12" r="4"></circle> <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path> </svg> <svg id="theme-icon-moon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"> <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path> </svg> </button> <script>
   (function () {
