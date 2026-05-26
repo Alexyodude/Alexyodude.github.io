@@ -34,6 +34,7 @@
       {
         "name": "Human progress",
         "slug": "human-progress",
+        "display": "large",
         "pieces": [
           { "image": "/art/2018-2019/human-progress/1.jpg" },
           { "image": "/art/2018-2019/human-progress/2.jpg" },
@@ -103,6 +104,7 @@
       {
         "name": "Landscape",
         "slug": "landscape",
+        "display": "large",
         "pieces": [
           { "image": "/art/2017-2018/landscape/landscape.jpg", "caption": "Golden Gate Bridge — mixed media (acrylic, spray paint, pen, pastel)" }
         ]
@@ -110,6 +112,7 @@
       {
         "name": "Time",
         "slug": "time",
+        "display": "large",
         "pieces": [
           { "image": "/art/2017-2018/time/big-bang.jpg", "caption": "Big Bang" },
           { "image": "/art/2017-2018/time/conscience-time.jpg", "caption": "Conscience Time" },

@@ -9,7 +9,7 @@ type Piece = {
 type Category = {
   name: string;
   slug: string;
-  display?: 'grid' | 'pages' | 'fade';
+  display?: 'grid' | 'pages' | 'fade' | 'large';
   archived?: boolean;
   pieces: Piece[];
 };
@@ -111,7 +111,7 @@ const heading = archived ? 'Archive' : 'Art';
               </div>
             </div>
           ) : c.pieces.length > 0 ? (
-            <ul class="mt-4 grid gap-4 grid-cols-1 sm:grid-cols-2">
+            <ul class={`mt-4 grid gap-4 grid-cols-1 ${c.display === 'large' ? '' : 'sm:grid-cols-2'}`}>
               {c.pieces.map((p) => (
                 <li>
                   <button
