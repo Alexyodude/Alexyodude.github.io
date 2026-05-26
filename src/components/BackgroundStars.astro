@@ -26,10 +26,10 @@
   </div>
   <div class="coord-actions">
     <span class="coord-help" style="margin:0">speed</span>
-    <button type="button" class="coord-speed" data-mul="0.2">0.2×</button>
-    <button type="button" class="coord-speed" data-mul="1">1×</button>
-    <button type="button" class="coord-speed" data-mul="5">5×</button>
-    <button type="button" class="coord-speed" data-mul="20">20×</button>
+    <button type="button" class="coord-speed" data-mul="1">1c</button>
+    <button type="button" class="coord-speed" data-mul="1000">1kc</button>
+    <button type="button" class="coord-speed" data-mul="1000000">1Mc</button>
+    <button type="button" class="coord-speed" data-mul="1000000000">1Gc</button>
   </div>
 </aside>
 
@@ -143,8 +143,11 @@
     const RENDER_DISTANCE = 1e17;   // meters — about 10.6 light-years
     const CHUNK_SIZE      = 2e16;   // meters — about 2.1 light-years per chunk
     const N_RADIUS        = Math.ceil(RENDER_DISTANCE / CHUNK_SIZE); // chunks in each axis
-    let DRIFT_V           = 5e16;   // m/s on +Z (mutable via speed buttons)
-    const DRIFT_DEFAULT   = 5e16;
+    // Default drift = speed of light (1 light-second per second).
+    // Mostly aesthetic at light-year render scale; use speed buttons for warp.
+    const C               = 299792458;
+    let DRIFT_V           = C;
+    const DRIFT_DEFAULT   = C;
     const CACHE_LIMIT     = 50000;  // chunk cache hard limit
     const FOCAL_BASE      = 0.95;   // multiplier × max(w,h)
 
