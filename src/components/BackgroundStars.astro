@@ -25,11 +25,11 @@
     <button type="button" id="coord-pause">⏸ Pause</button>
   </div>
   <div class="coord-actions">
-    <span class="coord-help" style="margin:0">speed</span>
-    <button type="button" class="coord-speed" data-mul="1">1c</button>
-    <button type="button" class="coord-speed" data-mul="1000">1kc</button>
-    <button type="button" class="coord-speed" data-mul="1000000">1Mc</button>
-    <button type="button" class="coord-speed" data-mul="1000000000">1Gc</button>
+    <span class="coord-help" style="margin:0">time</span>
+    <button type="button" class="coord-speed" data-mul="1">real</button>
+    <button type="button" class="coord-speed" data-mul="86400">day/s</button>
+    <button type="button" class="coord-speed" data-mul="31557600">yr/s</button>
+    <button type="button" class="coord-speed" data-mul="31557600000">kyr/s</button>
   </div>
 </aside>
 
@@ -143,11 +143,15 @@
     const RENDER_DISTANCE = 1e17;   // meters — about 10.6 light-years
     const CHUNK_SIZE      = 2e16;   // meters — about 2.1 light-years per chunk
     const N_RADIUS        = Math.ceil(RENDER_DISTANCE / CHUNK_SIZE); // chunks in each axis
-    // Default drift = speed of light (1 light-second per second).
-    // Mostly aesthetic at light-year render scale; use speed buttons for warp.
+    // Drift is fixed at c (speed of light). Apparent motion comes from a
+    // simulated TIME dilation — visitors choose how many seconds of universe
+    // time pass per real second. Default = 1 year/sec (≈ 1 light-year/sec).
     const C               = 299792458;
-    let DRIFT_V           = C;
-    const DRIFT_DEFAULT   = C;
+    const DRIFT_V         = C;          // m/s, fixed at speed of light
+    const SEC_PER_DAY     = 86400;
+    const SEC_PER_YEAR    = 31557600;
+    let TIME_MUL          = SEC_PER_YEAR; // universe-seconds elapsed per real-second
+    const TIME_DEFAULT    = SEC_PER_YEAR;
     const CACHE_LIMIT     = 50000;  // chunk cache hard limit
     const FOCAL_BASE      = 0.95;   // multiplier × max(w,h)
 
@@ -388,12 +392,12 @@
     document.querySelectorAll('.coord-speed').forEach((b) => {
       b.addEventListener('click', () => {
         const m = parseFloat(b.dataset.mul) || 1;
-        DRIFT_V = DRIFT_DEFAULT * m;
+        TIME_MUL = m;
         document.querySelectorAll('.coord-speed').forEach((x) => x.classList.toggle('coord-speed-active', x === b));
       });
     });
-    // Mark default active
-    const defaultSpeed = document.querySelector('.coord-speed[data-mul="1"]');
+    // Mark default active (1 year/sec)
+    const defaultSpeed = document.querySelector('.coord-speed[data-mul="' + TIME_DEFAULT + '"]');
     if (defaultSpeed) defaultSpeed.classList.add('coord-speed-active');
 
     // ===== render =====
@@ -411,7 +415,7 @@
     function frame(nowMs) {
       const dt = Math.min(0.1, (nowMs - lastFrameMs) / 1000);
       lastFrameMs = nowMs;
-      if (drifting) cam[2] += DRIFT_V * dt;
+      if (drifting) cam[2] += DRIFT_V * dt * TIME_MUL;
       if (nowMs - lastSavedMs > 500) {
         savePosition();
         refreshUI();
