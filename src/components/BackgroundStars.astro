@@ -512,8 +512,11 @@
     window.addEventListener('mousemove', (e) => {
       if (!dragging) return;
       const sens = 0.0035;
+      // FPS look convention: drag right → look right, drag down → look down.
+      // Pitch is negated because world +Y points down (screen-down) while
+      // "looking down" requires forward.y > 0, i.e. pitch < 0.
       yaw   = dragYaw   + (e.clientX - dragX) * sens;
-      pitch = dragPitch + (e.clientY - dragY) * sens;
+      pitch = dragPitch - (e.clientY - dragY) * sens;
       pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
     });
     window.addEventListener('mouseup', (e) => { if (e.button === 2) dragging = false; });
