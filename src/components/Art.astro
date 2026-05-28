@@ -5,6 +5,7 @@ type Piece = {
   image: string;
   caption?: string;
   archived?: boolean;
+  wide?: boolean;
 };
 
 type Category = {
@@ -129,7 +130,7 @@ const heading = archived ? 'Archive' : 'Art';
           ) : c.pieces.length > 0 ? (
             <ul class={`mt-4 grid gap-4 grid-cols-1 ${c.display === 'large' ? '' : 'sm:grid-cols-2'}`}>
               {c.pieces.map((p) => (
-                <li>
+                <li class={p.wide && c.display !== 'large' ? 'sm:col-span-2' : ''}>
                   <button
                     type="button"
                     class="art-thumb block w-full rounded-lg border border-border overflow-hidden bg-border/20 hover:border-accent transition-colors"

@@ -144,7 +144,7 @@
           { "image": "/art/2016-2017/mixed-media/mashup-painting.jpg", "caption": "Mashup Painting" },
           { "image": "/art/2016-2017/mixed-media/paper-cutting.jpg", "caption": "Paper Cutting", "archived": true },
           { "image": "/art/2016-2017/mixed-media/pastel-coloring.jpg", "caption": "Pastel Coloring" },
-          { "image": "/art/2016-2017/mixed-media/apple-wallpaper.jpg", "caption": "Apple Wallpaper" }
+          { "image": "/art/2016-2017/mixed-media/apple-wallpaper.jpg", "caption": "Apple Wallpaper", "wide": true }
         ]
       }
     ]
