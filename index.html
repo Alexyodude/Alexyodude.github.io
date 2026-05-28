@@ -61,6 +61,15 @@
     function savePosition() {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cam)); } catch {}
     }
+    function updateUrl() {
+      try {
+        const u = new URL(location.href);
+        u.searchParams.set('x', cam[0].toExponential(3));
+        u.searchParams.set('y', cam[1].toExponential(3));
+        u.searchParams.set('z', cam[2].toExponential(3));
+        history.replaceState(null, '', u.pathname + u.search + u.hash);
+      } catch {}
+    }
 
     // ===== deterministic PRNG seeded from chunk coords =====
     function hashChunk(x, y, z) {
@@ -232,6 +241,7 @@
       cam = [x, y, z];
       refreshUI();
       savePosition();
+      updateUrl();
     }
 
     if (form) {
@@ -298,6 +308,7 @@
       if (drifting) cam[2] += DRIFT_V * dt * TIME_MUL;
       if (nowMs - lastSavedMs > 500) {
         savePosition();
+        updateUrl();
         refreshUI();
         lastSavedMs = nowMs;
       }
@@ -568,7 +579,7 @@ Jihoon Park <span class="text-muted font-normal">(Alex)</span> </a> <div class="
           expand(a, !isExpanded);
         }
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        history.replaceState(null, '', `#${id}`);
+        history.replaceState(null, '', location.pathname + location.search + '#' + id);
       });
     });
   }
