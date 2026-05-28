@@ -39,6 +39,7 @@
     let lastFrameMs = performance.now();
     let lastSavedMs = 0;
     let lastNearestD = Infinity; // distance to closest object, tracked each frame for auto-slowdown
+    let lastNearestR = 0;        // physical radius of that object — sets a minimum movement speed
     const chunkCache = new Map();
 
     function readInitial() {
@@ -806,9 +807,12 @@
         const isShift = keys.has('shift') || keys.has('Shift');
         const proxFactor = lastNearestD === Infinity
           ? 1
-          : Math.min(1, Math.max(0.0008, lastNearestD / 1e13));
+          : Math.min(1, Math.max(0.005, lastNearestD / 1e13));
         const base = isShift ? 1e16 : 1e10;
-        const speed = base * proxFactor;
+        // Floor: at least cross 1 object-radius per ~1-2 seconds at base, or
+        // 10 radii per second with Shift. Keeps movement usable around any object.
+        const sizeFloor = lastNearestR * (isShift ? 10 : 0.8);
+        const speed = Math.max(base * proxFactor, sizeFloor);
         const mv = speed * dt;
         if (keys.has('w')) cam[2] += mv;
         if (keys.has('s')) cam[2] -= mv;
@@ -845,6 +849,7 @@
       const nebulaeDraw = [];
       const blackHolesDraw = [];
       let nearestThisFrame = Infinity;
+      let nearestRThisFrame = 0;
 
       for (let dx = -N_RADIUS; dx <= N_RADIUS; dx++) {
         for (let dy = -N_RADIUS; dy <= N_RADIUS; dy++) {
@@ -859,7 +864,10 @@
               const oy = obj.wy - cam[1];
               const oz = obj.wz - cam[2];
               const d2 = ox * ox + oy * oy + oz * oz;
-              if (d2 < nearestThisFrame) nearestThisFrame = d2;
+              if (d2 < nearestThisFrame) {
+                nearestThisFrame = d2;
+                nearestRThisFrame = obj.physRadius || 1e6;
+              }
               if (d2 > renderD2) continue;
               const proj = project(ox, oy, oz);
               if (!proj) continue;
@@ -1107,6 +1115,7 @@
       }
 
       lastNearestD = nearestThisFrame === Infinity ? Infinity : Math.sqrt(nearestThisFrame);
+      lastNearestR = nearestRThisFrame;
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
