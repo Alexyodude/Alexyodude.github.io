@@ -31,7 +31,7 @@
     <button type="button" class="coord-visit" data-type="nebula">nebula</button>
     <button type="button" class="coord-visit" data-type="blackhole">black hole</button>
   </div>
-  <div class="coord-help">WASD move · Q/E up/down · Shift boost</div>
+  <div class="coord-help">WASD precise · Q/E up/down · Shift warp</div>
   <div class="coord-actions">
     <span class="coord-help" style="margin:0">time</span>
     <button type="button" class="coord-speed" data-mul="1">real</button>
@@ -506,10 +506,12 @@
       const dt = Math.min(0.1, (nowMs - lastFrameMs) / 1000);
       lastFrameMs = nowMs;
       if (drifting) cam[2] += DRIFT_V * dt * TIME_MUL;
-      // Manual WASD/QE — independent of time dilation; ~2 ly/sec, 5x with Shift
+      // Manual WASD/QE — slow precision by default (good for approaching a star);
+      // hold Shift to cruise at light-year scale.
       if (keys.size) {
-        const boost = (keys.has('shift') || keys.has('Shift')) ? 5 : 1;
-        const mv = 2e16 * boost * dt;
+        const isShift = keys.has('shift') || keys.has('Shift');
+        const speed = isShift ? 1e16 : 1e10; // m/s — 1 ly/s vs ~33c
+        const mv = speed * dt;
         if (keys.has('w')) cam[2] += mv;
         if (keys.has('s')) cam[2] -= mv;
         if (keys.has('d')) cam[0] += mv;
