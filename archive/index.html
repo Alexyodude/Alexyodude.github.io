@@ -9,7 +9,7 @@
           document.documentElement.setAttribute('data-theme', 'light');
         }
       })();
-    </script><link rel="stylesheet" href="/_astro/archive.rkgmplUu.css"></head> <body> <canvas id="bg-stars" aria-hidden="true" data-astro-cid-wtjyg2fu></canvas> <aside id="coord-panel" class="hidden md:block" data-astro-cid-wtjyg2fu> <div class="coord-panel-title" data-astro-cid-wtjyg2fu>COORDINATES (m)</div> <div class="coord-rows" data-astro-cid-wtjyg2fu> <div data-astro-cid-wtjyg2fu><span data-astro-cid-wtjyg2fu>x</span><b id="coord-x" data-astro-cid-wtjyg2fu>0</b></div> <div data-astro-cid-wtjyg2fu><span data-astro-cid-wtjyg2fu>y</span><b id="coord-y" data-astro-cid-wtjyg2fu>0</b></div> <div data-astro-cid-wtjyg2fu><span data-astro-cid-wtjyg2fu>z</span><b id="coord-z" data-astro-cid-wtjyg2fu>0</b></div> </div> <form id="coord-form" class="coord-form" autocomplete="off" data-astro-cid-wtjyg2fu> <input id="coord-input" placeholder="x, y, z" aria-label="Teleport coordinates" spellcheck="false" data-astro-cid-wtjyg2fu> <button type="submit" data-astro-cid-wtjyg2fu>Go</button> </form> <div class="coord-actions" data-astro-cid-wtjyg2fu> <button type="button" id="coord-origin" data-astro-cid-wtjyg2fu>↺ Origin</button> <button type="button" id="coord-random" data-astro-cid-wtjyg2fu>⤳ Random</button> <button type="button" id="coord-pause" data-astro-cid-wtjyg2fu>⏸ Pause</button> </div> <div class="coord-actions" data-astro-cid-wtjyg2fu> <span class="coord-help" style="margin:0" data-astro-cid-wtjyg2fu>time</span> <button type="button" class="coord-speed" data-mul="1" data-astro-cid-wtjyg2fu>real</button> <button type="button" class="coord-speed" data-mul="86400" data-astro-cid-wtjyg2fu>day/s</button> <button type="button" class="coord-speed" data-mul="31557600" data-astro-cid-wtjyg2fu>yr/s</button> <button type="button" class="coord-speed" data-mul="31557600000" data-astro-cid-wtjyg2fu>kyr/s</button> </div> </aside>  <script>
+    </script><link rel="stylesheet" href="/_astro/archive.rkgmplUu.css"></head> <body> <canvas id="bg-stars" aria-hidden="true" data-astro-cid-wtjyg2fu></canvas> <aside id="coord-panel" class="hidden md:block" data-astro-cid-wtjyg2fu> <div class="coord-panel-title" data-astro-cid-wtjyg2fu>COORDINATES (m)</div> <div class="coord-rows" data-astro-cid-wtjyg2fu> <div data-astro-cid-wtjyg2fu><span data-astro-cid-wtjyg2fu>x</span><b id="coord-x" data-astro-cid-wtjyg2fu>0</b></div> <div data-astro-cid-wtjyg2fu><span data-astro-cid-wtjyg2fu>y</span><b id="coord-y" data-astro-cid-wtjyg2fu>0</b></div> <div data-astro-cid-wtjyg2fu><span data-astro-cid-wtjyg2fu>z</span><b id="coord-z" data-astro-cid-wtjyg2fu>0</b></div> </div> <form id="coord-form" class="coord-form" autocomplete="off" data-astro-cid-wtjyg2fu> <input id="coord-input" placeholder="x, y, z" aria-label="Teleport coordinates" spellcheck="false" data-astro-cid-wtjyg2fu> <button type="submit" data-astro-cid-wtjyg2fu>Go</button> </form> <div class="coord-actions" data-astro-cid-wtjyg2fu> <button type="button" id="coord-origin" data-astro-cid-wtjyg2fu>↺ Origin</button> <button type="button" id="coord-random" data-astro-cid-wtjyg2fu>⤳ Random</button> <button type="button" id="coord-pause" data-astro-cid-wtjyg2fu>⏸ Pause</button> </div> <div class="coord-actions" data-astro-cid-wtjyg2fu> <button type="button" id="coord-planet" data-astro-cid-wtjyg2fu>→ Visit planet</button> </div> <div class="coord-help" data-astro-cid-wtjyg2fu>WASD move · Q/E up/down · Shift boost</div> <div class="coord-actions" data-astro-cid-wtjyg2fu> <span class="coord-help" style="margin:0" data-astro-cid-wtjyg2fu>time</span> <button type="button" class="coord-speed" data-mul="1" data-astro-cid-wtjyg2fu>real</button> <button type="button" class="coord-speed" data-mul="86400" data-astro-cid-wtjyg2fu>day/s</button> <button type="button" class="coord-speed" data-mul="31557600" data-astro-cid-wtjyg2fu>yr/s</button> <button type="button" class="coord-speed" data-mul="31557600000" data-astro-cid-wtjyg2fu>kyr/s</button> </div> </aside>  <script>
 (function () {
   function init() {
     const canvas = document.getElementById('bg-stars');
@@ -155,7 +155,9 @@
           const p = PLANET_PALETTE[Math.floor(r() * PLANET_PALETTE.length)];
           obj.type = 'planet';
           obj.cr = p[0]; obj.cg = p[1]; obj.cb = p[2];
-          obj.radius = 1.2 + r() * 3.5;
+          // physical radius in meters: 1e7 (small rocky) to 5e8 (gas giant) plus rare super-jupiter
+          obj.physRadius = 1e7 + r() * 5e8;
+          if (r() < 0.05) obj.physRadius *= 3;
           obj.hasRing = r() < 0.18;
         } else if (t < 0.992) {
           const n = NEBULA_PALETTE[Math.floor(r() * NEBULA_PALETTE.length)];
@@ -288,6 +290,65 @@
     const defaultSpeed = document.querySelector('.coord-speed[data-mul="' + TIME_DEFAULT + '"]');
     if (defaultSpeed) defaultSpeed.classList.add('coord-speed-active');
 
+    // ===== WASD/QE navigation =====
+    const keys = new Set();
+    function isTypingTarget(t) {
+      return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    }
+    window.addEventListener('keydown', (e) => {
+      if (isTypingTarget(e.target)) return;
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      keys.add(k);
+      if (k === ' ' || (['w','a','s','d','q','e'].includes(k))) e.preventDefault();
+    }, { passive: false });
+    window.addEventListener('keyup', (e) => {
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      keys.delete(k);
+    });
+    window.addEventListener('blur', () => keys.clear());
+
+    // ===== Visit nearest planet =====
+    function findNearestPlanet() {
+      const ccx = Math.floor(cam[0] / CHUNK_SIZE);
+      const ccy = Math.floor(cam[1] / CHUNK_SIZE);
+      const ccz = Math.floor(cam[2] / CHUNK_SIZE);
+      const RADIUS = 8; // search ±8 chunks (~17 ly cube)
+      let best = null, bestD2 = Infinity;
+      for (let dx = -RADIUS; dx <= RADIUS; dx++) {
+        for (let dy = -RADIUS; dy <= RADIUS; dy++) {
+          for (let dz = -RADIUS; dz <= RADIUS; dz++) {
+            const objs = getChunk(ccx + dx, ccy + dy, ccz + dz);
+            for (const obj of objs) {
+              if (obj.type !== 'planet') continue;
+              const ddx = obj.wx - cam[0];
+              const ddy = obj.wy - cam[1];
+              const ddz = obj.wz - cam[2];
+              const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+              if (d2 < bestD2) { bestD2 = d2; best = obj; }
+            }
+          }
+        }
+      }
+      return best;
+    }
+    const btnPlanet = document.getElementById('coord-planet');
+    if (btnPlanet) {
+      btnPlanet.addEventListener('click', () => {
+        const p = findNearestPlanet();
+        if (!p) {
+          btnPlanet.textContent = 'none found';
+          setTimeout(() => { btnPlanet.textContent = '→ Visit planet'; }, 1500);
+          return;
+        }
+        // Approach: place camera 5 planet-radii in front of the planet on the camera's +Z axis.
+        const approach = p.physRadius * 5;
+        teleport(p.wx, p.wy, p.wz - approach);
+        // Pause auto-drift so you can look around
+        drifting = false;
+        if (btnPause) btnPause.textContent = '▶ Resume';
+      });
+    }
+
     // ===== render =====
     function project(dx, dy, dz) {
       if (dz <= 1e6) return null; // behind/near plane (1 Mm)
@@ -304,6 +365,17 @@
       const dt = Math.min(0.1, (nowMs - lastFrameMs) / 1000);
       lastFrameMs = nowMs;
       if (drifting) cam[2] += DRIFT_V * dt * TIME_MUL;
+      // Manual WASD/QE — independent of time dilation; ~2 ly/sec, 5x with Shift
+      if (keys.size) {
+        const boost = (keys.has('shift') || keys.has('Shift')) ? 5 : 1;
+        const mv = 2e16 * boost * dt;
+        if (keys.has('w')) cam[2] += mv;
+        if (keys.has('s')) cam[2] -= mv;
+        if (keys.has('d')) cam[0] += mv;
+        if (keys.has('a')) cam[0] -= mv;
+        if (keys.has('q') || keys.has(' ')) cam[1] -= mv;
+        if (keys.has('e')) cam[1] += mv;
+      }
       if (nowMs - lastSavedMs > 500) {
         savePosition();
         updateUrl();
@@ -365,21 +437,25 @@
                   drawStar(proj.px, proj.py, `${rr},${gg},${bb}`, a * 0.6, size);
                 }
               } else if (obj.type === 'planet') {
-                const rad = obj.radius * depth * 1.6;
-                if (rad < 0.8) {
-                  drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, 0.6 * depth, Math.max(0.6, rad));
+                // True angular size: rad_px = physRadius * focal / dz.
+                // proj.k = focal / (dz/1e15), so multiply physRadius (m) / 1e15 by k.
+                const rad = obj.physRadius / 1e15 * proj.k;
+                if (rad < 0.6) {
+                  // Too far to resolve — render as faint dot
+                  drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, 0.5 * depth, Math.max(0.6, rad * 4));
                 } else {
+                  const visAlpha = Math.min(1, 0.4 + depth);
                   const grad = ctx.createRadialGradient(proj.px - rad * 0.35, proj.py - rad * 0.35, 0, proj.px, proj.py, rad);
-                  grad.addColorStop(0, `rgba(${obj.cr + 30},${obj.cg + 30},${obj.cb + 30},${(0.95 * depth + 0.05).toFixed(2)})`);
-                  grad.addColorStop(0.75, `rgba(${obj.cr},${obj.cg},${obj.cb},${(0.8 * depth + 0.1).toFixed(2)})`);
-                  grad.addColorStop(1, `rgba(${(obj.cr * 0.5) | 0},${(obj.cg * 0.5) | 0},${(obj.cb * 0.5) | 0},${(0.6 * depth + 0.1).toFixed(2)})`);
+                  grad.addColorStop(0, `rgba(${Math.min(255, obj.cr + 30)},${Math.min(255, obj.cg + 30)},${Math.min(255, obj.cb + 30)},${visAlpha.toFixed(2)})`);
+                  grad.addColorStop(0.75, `rgba(${obj.cr},${obj.cg},${obj.cb},${visAlpha.toFixed(2)})`);
+                  grad.addColorStop(1, `rgba(${(obj.cr * 0.5) | 0},${(obj.cg * 0.5) | 0},${(obj.cb * 0.5) | 0},${visAlpha.toFixed(2)})`);
                   ctx.fillStyle = grad;
                   ctx.beginPath();
                   ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2);
                   ctx.fill();
                   if (obj.hasRing && rad > 2) {
-                    ctx.strokeStyle = `rgba(${obj.cr},${obj.cg},${obj.cb},${(0.5 * depth).toFixed(2)})`;
-                    ctx.lineWidth = Math.max(0.6, rad * 0.18);
+                    ctx.strokeStyle = `rgba(${obj.cr},${obj.cg},${obj.cb},${(0.55 * visAlpha).toFixed(2)})`;
+                    ctx.lineWidth = Math.max(0.6, rad * 0.12);
                     ctx.beginPath();
                     ctx.ellipse(proj.px, proj.py, rad * 1.7, rad * 0.45, 0.4, 0, Math.PI * 2);
                     ctx.stroke();
