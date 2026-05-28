@@ -78,6 +78,16 @@
       h = (h ^ (h >>> 16)) >>> 0;
       return h || 1;
     }
+    // Stable per-object seed for deterministic LOD detail
+    function objHash(o) {
+      // Combine world coords; integer cast loses precision at very high coords but
+      // that's fine — neighbouring objects still get distinct seeds.
+      let h = 0x9E3779B1 >>> 0;
+      h = Math.imul(h ^ ((o.wx / 1e10) | 0), 0x85EBCA6B) >>> 0;
+      h = Math.imul(h ^ ((o.wy / 1e10) | 0), 0xC2B2AE35) >>> 0;
+      h = Math.imul(h ^ ((o.wz / 1e10) | 0), 0x27D4EB2F) >>> 0;
+      return (h ^ (h >>> 16)) >>> 0;
+    }
     function mulberry32(seed) {
       let s = seed >>> 0;
       return function () {
@@ -449,6 +459,46 @@
                   disc.addColorStop(1,   `rgba(${obj.cr},${obj.cg},${obj.cb},0)`);
                   ctx.fillStyle = disc;
                   ctx.beginPath(); ctx.arc(proj.px, proj.py, angRad, 0, Math.PI * 2); ctx.fill();
+                  // LOD: surface granulation (clipped to disc)
+                  if (angRad > 18) {
+                    const r = mulberry32(objHash(obj));
+                    ctx.save();
+                    ctx.beginPath(); ctx.arc(proj.px, proj.py, angRad * 0.98, 0, Math.PI * 2); ctx.clip();
+                    const granules = 20 + Math.floor(Math.min(60, angRad / 6));
+                    for (let s = 0; s < granules; s++) {
+                      const ang = r() * Math.PI * 2;
+                      const dist = Math.sqrt(r()) * angRad * 0.97;
+                      const sx = proj.px + Math.cos(ang) * dist;
+                      const sy = proj.py + Math.sin(ang) * dist;
+                      const spotR = angRad * (0.015 + r() * 0.045);
+                      // Mix darker (cool downflows) and brighter (hot upflows) cells
+                      const bright = r() > 0.5;
+                      const k = bright ? 1.18 : 0.72;
+                      const cr = Math.min(255, (obj.cr * k) | 0);
+                      const cg = Math.min(255, (obj.cg * k) | 0);
+                      const cb = Math.min(255, (obj.cb * k) | 0);
+                      ctx.fillStyle = `rgba(${cr},${cg},${cb},${bright ? 0.55 : 0.45})`;
+                      ctx.beginPath(); ctx.arc(sx, sy, spotR, 0, Math.PI * 2); ctx.fill();
+                    }
+                    ctx.restore();
+                  }
+                  // LOD: prominences flaring off the limb
+                  if (angRad > 40) {
+                    const r = mulberry32(objHash(obj) ^ 0xBADC0DE);
+                    const prom = 2 + Math.floor(r() * 4);
+                    for (let p = 0; p < prom; p++) {
+                      const ang = r() * Math.PI * 2;
+                      const px = proj.px + Math.cos(ang) * angRad;
+                      const py = proj.py + Math.sin(ang) * angRad;
+                      const flareR = angRad * (0.18 + r() * 0.25);
+                      const flare = ctx.createRadialGradient(px, py, 0, px, py, flareR);
+                      flare.addColorStop(0, 'rgba(255,170,80,0.7)');
+                      flare.addColorStop(0.6, 'rgba(255,90,40,0.25)');
+                      flare.addColorStop(1, 'rgba(255,40,20,0)');
+                      ctx.fillStyle = flare;
+                      ctx.beginPath(); ctx.arc(px, py, flareR, 0, Math.PI * 2); ctx.fill();
+                    }
+                  }
                   // Corona / halo
                   const halo = ctx.createRadialGradient(proj.px, proj.py, angRad, proj.px, proj.py, angRad * 3);
                   halo.addColorStop(0, `rgba(${obj.cr},${obj.cg},${obj.cb},0.35)`);
@@ -485,6 +535,36 @@
                   ctx.beginPath();
                   ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2);
                   ctx.fill();
+                  // LOD: surface continents (clipped to planet disc)
+                  if (rad > 6) {
+                    const r = mulberry32(objHash(obj));
+                    ctx.save();
+                    ctx.beginPath(); ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2); ctx.clip();
+                    const spotCount = 4 + Math.floor(Math.min(20, rad / 8));
+                    for (let s = 0; s < spotCount; s++) {
+                      const ang = r() * Math.PI * 2;
+                      const dist = r() * rad * 0.95;
+                      const sx = proj.px + Math.cos(ang) * dist;
+                      const sy = proj.py + Math.sin(ang) * dist;
+                      const spotR = rad * (0.06 + r() * 0.22);
+                      const k = 0.45 + r() * 0.3;
+                      ctx.fillStyle = `rgba(${(obj.cr * k) | 0},${(obj.cg * k) | 0},${(obj.cb * k) | 0},0.45)`;
+                      ctx.beginPath(); ctx.arc(sx, sy, spotR, 0, Math.PI * 2); ctx.fill();
+                    }
+                    ctx.restore();
+                  }
+                  // LOD: atmospheric limb glow (only when close enough to read)
+                  if (rad > 25) {
+                    const ar = Math.min(255, obj.cr + 60);
+                    const ag = Math.min(255, obj.cg + 60);
+                    const ab = Math.min(255, obj.cb + 60);
+                    const limb = ctx.createRadialGradient(proj.px, proj.py, rad * 0.92, proj.px, proj.py, rad * 1.18);
+                    limb.addColorStop(0,   `rgba(${ar},${ag},${ab},0)`);
+                    limb.addColorStop(0.45,`rgba(${ar},${ag},${ab},0.4)`);
+                    limb.addColorStop(1,   `rgba(${ar},${ag},${ab},0)`);
+                    ctx.fillStyle = limb;
+                    ctx.beginPath(); ctx.arc(proj.px, proj.py, rad * 1.18, 0, Math.PI * 2); ctx.fill();
+                  }
                   if (obj.hasRing && rad > 2) {
                     ctx.strokeStyle = `rgba(${obj.cr},${obj.cg},${obj.cb},${(0.55 * visAlpha).toFixed(2)})`;
                     ctx.lineWidth = Math.max(0.6, rad * 0.12);
@@ -507,14 +587,58 @@
       if (nebulaeDraw.length) {
         ctx.globalCompositeOperation = dark ? 'lighter' : 'multiply';
         for (const n of nebulaeDraw) {
-          const r = Math.min(4000, n.obj.physRadius / 1e15 * n.proj.k);
-          if (r < 8) continue;
-          const grad = ctx.createRadialGradient(n.proj.px, n.proj.py, 0, n.proj.px, n.proj.py, r);
+          const rad = Math.min(4000, n.obj.physRadius / 1e15 * n.proj.k);
+          if (rad < 8) continue;
+          // Base cloud
+          const grad = ctx.createRadialGradient(n.proj.px, n.proj.py, 0, n.proj.px, n.proj.py, rad);
           grad.addColorStop(0,   `rgba(${n.obj.cr},${n.obj.cg},${n.obj.cb},0.22)`);
           grad.addColorStop(0.4, `rgba(${n.obj.cr},${n.obj.cg},${n.obj.cb},0.07)`);
           grad.addColorStop(1,   `rgba(${n.obj.cr},${n.obj.cg},${n.obj.cb},0)`);
           ctx.fillStyle = grad;
-          ctx.fillRect(n.proj.px - r, n.proj.py - r, r * 2, r * 2);
+          ctx.fillRect(n.proj.px - rad, n.proj.py - rad, rad * 2, rad * 2);
+          // LOD: layered sub-clouds with color variation
+          if (rad > 120) {
+            const r = mulberry32(objHash(n.obj));
+            const subs = 4 + Math.floor(Math.min(10, rad / 80));
+            for (let s = 0; s < subs; s++) {
+              const ang = r() * Math.PI * 2;
+              const dist = r() * rad * 0.6;
+              const sx = n.proj.px + Math.cos(ang) * dist;
+              const sy = n.proj.py + Math.sin(ang) * dist;
+              const subR = rad * (0.18 + r() * 0.4);
+              const shift = 50;
+              const cr = Math.max(0, Math.min(255, (n.obj.cr + (r() - 0.5) * shift) | 0));
+              const cg = Math.max(0, Math.min(255, (n.obj.cg + (r() - 0.5) * shift) | 0));
+              const cb = Math.max(0, Math.min(255, (n.obj.cb + (r() - 0.5) * shift) | 0));
+              const g2 = ctx.createRadialGradient(sx, sy, 0, sx, sy, subR);
+              g2.addColorStop(0, `rgba(${cr},${cg},${cb},0.16)`);
+              g2.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+              ctx.fillStyle = g2;
+              ctx.fillRect(sx - subR, sy - subR, subR * 2, subR * 2);
+            }
+          }
+          // LOD: bright wisps / filaments when very close
+          if (rad > 600) {
+            const r = mulberry32(objHash(n.obj) ^ 0xF11AFF);
+            const wisps = 6 + Math.floor(r() * 6);
+            ctx.strokeStyle = `rgba(${Math.min(255, n.obj.cr + 60)},${Math.min(255, n.obj.cg + 60)},${Math.min(255, n.obj.cb + 60)},0.18)`;
+            ctx.lineWidth = 1.2;
+            for (let w = 0; w < wisps; w++) {
+              const ang = r() * Math.PI * 2;
+              const len = rad * (0.35 + r() * 0.55);
+              const startR = r() * rad * 0.3;
+              const sx = n.proj.px + Math.cos(ang) * startR;
+              const sy = n.proj.py + Math.sin(ang) * startR;
+              const ex = sx + Math.cos(ang) * len;
+              const ey = sy + Math.sin(ang) * len;
+              const mx = (sx + ex) / 2 + (r() - 0.5) * len * 0.3;
+              const my = (sy + ey) / 2 + (r() - 0.5) * len * 0.3;
+              ctx.beginPath();
+              ctx.moveTo(sx, sy);
+              ctx.quadraticCurveTo(mx, my, ex, ey);
+              ctx.stroke();
+            }
+          }
         }
         ctx.globalCompositeOperation = 'source-over';
       }
@@ -523,21 +647,55 @@
       for (const bh of blackHolesDraw) {
         const rEH = Math.min(800, bh.obj.physRadius / 1e15 * bh.proj.k);
         if (rEH < 2) continue;
-        // Accretion halo & gravitational lensing glow (extends well beyond the horizon)
-        const r = rEH * 6;
-        const halo = ctx.createRadialGradient(bh.proj.px, bh.proj.py, rEH * 0.5, bh.proj.px, bh.proj.py, r);
+        // Outer halo / gravitational lensing glow
+        const rHalo = rEH * 6;
+        const halo = ctx.createRadialGradient(bh.proj.px, bh.proj.py, rEH * 0.5, bh.proj.px, bh.proj.py, rHalo);
         halo.addColorStop(0,   'rgba(255,180,90,0.5)');
         halo.addColorStop(0.2, 'rgba(255,120,40,0.2)');
         halo.addColorStop(0.5, 'rgba(120,60,200,0.08)');
         halo.addColorStop(1,   'rgba(0,0,0,0)');
         ctx.fillStyle = halo;
-        ctx.fillRect(bh.proj.px - r, bh.proj.py - r, r * 2, r * 2);
-        // Hot accretion ring just outside the photon sphere
-        ctx.strokeStyle = 'rgba(255,210,140,0.85)';
-        ctx.lineWidth = Math.max(1, rEH * 0.22);
-        ctx.beginPath();
-        ctx.arc(bh.proj.px, bh.proj.py, rEH * 1.5, 0, Math.PI * 2);
-        ctx.stroke();
+        ctx.fillRect(bh.proj.px - rHalo, bh.proj.py - rHalo, rHalo * 2, rHalo * 2);
+
+        if (rEH < 10) {
+          // Far view: simple ring + horizon
+          ctx.strokeStyle = 'rgba(255,210,140,0.85)';
+          ctx.lineWidth = Math.max(1, rEH * 0.22);
+          ctx.beginPath();
+          ctx.arc(bh.proj.px, bh.proj.py, rEH * 1.5, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          // LOD: tilted accretion disc with bright/dim Doppler asymmetry
+          const r = mulberry32(objHash(bh.obj));
+          const tilt = (r() - 0.5) * 0.6 + 0.35; // radians, slight randomized tilt
+          ctx.save();
+          ctx.translate(bh.proj.px, bh.proj.py);
+          ctx.rotate(tilt);
+          const bands = 6;
+          for (let b = 0; b < bands; b++) {
+            const t = b / (bands - 1);
+            const rBand = rEH * (1.4 + t * 2.2);
+            const minor = rBand * 0.22;
+            const hueBase = 22 + t * 18;
+            const alpha = (0.85 - t * 0.55).toFixed(2);
+            const gradH = ctx.createLinearGradient(-rBand, 0, rBand, 0);
+            gradH.addColorStop(0, `hsla(${hueBase + 20}, 90%, 70%, ${alpha})`);
+            gradH.addColorStop(0.5, `hsla(${hueBase}, 80%, 50%, ${alpha})`);
+            gradH.addColorStop(1, `hsla(${hueBase - 12}, 70%, 32%, ${alpha})`);
+            ctx.strokeStyle = gradH;
+            ctx.lineWidth = Math.max(0.8, rEH * 0.18);
+            ctx.beginPath();
+            ctx.ellipse(0, 0, rBand, minor, 0, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          ctx.restore();
+          // LOD: photon ring — thin bright sphere just outside horizon
+          ctx.strokeStyle = 'rgba(255,250,200,0.9)';
+          ctx.lineWidth = Math.max(0.6, rEH * 0.06);
+          ctx.beginPath();
+          ctx.arc(bh.proj.px, bh.proj.py, rEH * 1.18, 0, Math.PI * 2);
+          ctx.stroke();
+        }
         // Event horizon — pitch black
         ctx.fillStyle = '#000';
         ctx.beginPath();
