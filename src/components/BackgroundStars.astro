@@ -36,7 +36,7 @@
   <div class="coord-help">WASD precise · Q/E up/down · Shift warp · right-click drag to look</div>
   <div class="coord-actions">
     <span class="coord-help" style="margin:0">time</span>
-    <button type="button" class="coord-speed" data-mul="1">real</button>
+    <button type="button" class="coord-speed" data-mul="0.3">0.3c</button>
     <button type="button" class="coord-speed" data-mul="86400">day/s</button>
     <button type="button" class="coord-speed" data-mul="31557600">yr/s</button>
     <button type="button" class="coord-speed" data-mul="31557600000">kyr/s</button>
@@ -160,8 +160,8 @@
     const DRIFT_V         = C;          // m/s, fixed at speed of light
     const SEC_PER_DAY     = 86400;
     const SEC_PER_YEAR    = 31557600;
-    let TIME_MUL          = SEC_PER_YEAR; // universe-seconds elapsed per real-second
-    const TIME_DEFAULT    = SEC_PER_YEAR;
+    let TIME_MUL          = 0.3;  // default: 0.3c drift — gentle relativistic effects
+    const TIME_DEFAULT    = 0.3;
     const CACHE_LIMIT     = 50000;  // chunk cache hard limit
     const FOCAL_BASE      = 0.95;   // multiplier × max(w,h)
 
@@ -170,6 +170,7 @@
     let yaw = 0;     // rotation around world Y axis (right-click drag horizontal)
     let pitch = 0;   // rotation around camera-local X axis (right-click drag vertical)
     let drifting = true;
+    let lastCamV = 0; // last frame's instantaneous speed (m/s), used by UI
     let lastFrameMs = performance.now();
     let lastSavedMs = 0;
     let lastNearestD = Infinity; // distance to closest object, tracked each frame for auto-slowdown
@@ -419,9 +420,8 @@
       elX.textContent = fmt(cam[0]);
       elY.textContent = fmt(cam[1]);
       elZ.textContent = fmt(cam[2]);
-      const vEff = drifting ? DRIFT_V * TIME_MUL : 0;
-      const b = Math.min(0.999, vEff / C);
-      elV.textContent = fmtVelocity(vEff);
+      const b = Math.min(0.999, lastCamV / C);
+      elV.textContent = fmtVelocity(lastCamV);
       elB.textContent = b.toFixed(4) + (b >= 0.999 ? ' (max)' : '');
     }
     refreshUI();
@@ -1016,9 +1016,12 @@
       const ux = ry * fz - rz * fy;
       const uy = rz * fx - rx * fz;
       const uz = rx * fy - ry * fx;
+      // Accumulate this frame's intended camera delta from drift + manual movement,
+      // then apply at once. Total |Δ|/dt becomes the velocity used for relativistic β.
+      let dvx = 0, dvy = 0, dvz = 0;
       if (drifting) {
         const ds = DRIFT_V * dt * TIME_MUL;
-        cam[0] += fx * ds; cam[1] += fy * ds; cam[2] += fz * ds;
+        dvx += fx * ds; dvy += fy * ds; dvz += fz * ds;
       }
       // Manual WASD/QE — auto-scales by proximity to nearest object.
       // Far from anything: full speed. Approach an object → smooth slowdown so
@@ -1042,14 +1045,19 @@
         let speed = Math.max(base * proxFactor, sizeFloor);
         speed *= shiftMul;
         const mv = speed * dt;
-        // Movement in camera-local axes (forward / right / up)
-        if (keys.has('w')) { cam[0] += fx * mv; cam[1] += fy * mv; cam[2] += fz * mv; }
-        if (keys.has('s')) { cam[0] -= fx * mv; cam[1] -= fy * mv; cam[2] -= fz * mv; }
-        if (keys.has('d')) { cam[0] += rx * mv; cam[1] += ry * mv; cam[2] += rz * mv; }
-        if (keys.has('a')) { cam[0] -= rx * mv; cam[1] -= ry * mv; cam[2] -= rz * mv; }
-        if (keys.has('q') || keys.has(' ')) { cam[0] += ux * mv; cam[1] += uy * mv; cam[2] += uz * mv; }
-        if (keys.has('e')) { cam[0] -= ux * mv; cam[1] -= uy * mv; cam[2] -= uz * mv; }
+        // Movement in camera-local axes — accumulate into dv, applied below
+        if (keys.has('w')) { dvx += fx * mv; dvy += fy * mv; dvz += fz * mv; }
+        if (keys.has('s')) { dvx -= fx * mv; dvy -= fy * mv; dvz -= fz * mv; }
+        if (keys.has('d')) { dvx += rx * mv; dvy += ry * mv; dvz += rz * mv; }
+        if (keys.has('a')) { dvx -= rx * mv; dvy -= ry * mv; dvz -= rz * mv; }
+        if (keys.has('q') || keys.has(' ')) { dvx += ux * mv; dvy += uy * mv; dvz += uz * mv; }
+        if (keys.has('e')) { dvx -= ux * mv; dvy -= uy * mv; dvz -= uz * mv; }
       }
+      // Apply combined movement and compute instantaneous velocity / β
+      cam[0] += dvx; cam[1] += dvy; cam[2] += dvz;
+      const dvMag = Math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz);
+      const camV = dt > 0 ? dvMag / dt : 0;
+      lastCamV = camV;
       if (nowMs - lastSavedMs > 500) {
         savePosition();
         updateUrl();
@@ -1068,10 +1076,9 @@
       const ccx = Math.floor(cam[0] / CHUNK_SIZE);
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
       const ccz = Math.floor(cam[2] / CHUNK_SIZE);
-      // Relativistic β from current drift velocity (capped at 0.999).
-      // Drift at warp time saturates at near-c → strong aberration / Doppler.
-      const vEff = drifting ? DRIFT_V * TIME_MUL : 0;
-      const beta = Math.min(0.999, vEff / C);
+      // Relativistic β from actual instantaneous camera velocity (drift + WASD).
+      // Saturates at 0.999 — Shift warp ramps up to this asymptotically.
+      const beta = Math.min(0.999, camV / C);
 
       // Iterate the full cube around the camera (we can now look in any direction)
       const minDz = -N_RADIUS;
