@@ -400,6 +400,29 @@
       const k = focal / (dz / 1e15); // scale so that ~1e15 m maps reasonably
       return { px: cx + dx / 1e15 * k, py: cy + dy / 1e15 * k, k, dz };
     }
+    // Relativistic aberration toward +Z (direction of drift). β capped at 0.999.
+    // Returns transformed [dx', dy', dz', cosTheta_apparent] used for projection
+    // and Doppler color shift.
+    function aberrate(dx, dy, dz, beta) {
+      const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (r <= 0) return [dx, dy, dz, 1];
+      const cosT = dz / r;
+      if (beta < 0.005) return [dx, dy, dz, cosT];
+      const cosTp = (cosT + beta) / (1 + beta * cosT);
+      const sinTp = Math.sqrt(Math.max(0, 1 - cosTp * cosTp));
+      const sinT  = Math.sqrt(Math.max(0, 1 - cosT  * cosT));
+      const scale = sinT > 1e-9 ? sinTp / sinT : 1;
+      return [dx * scale, dy * scale, r * cosTp, cosTp];
+    }
+    // Doppler color shift: D > 1 blueshift, D < 1 redshift.
+    function dopplerColor(r, g, b, D) {
+      const dr = D > 1 ? r / D : r * (1 + (1 - D) * 0.9);
+      const dg = g * Math.pow(D, 0.4);
+      const db = D > 1 ? Math.min(255, b * D * 1.2) : b * D * D;
+      return ((Math.max(0, Math.min(255, dr | 0)) << 16) |
+              (Math.max(0, Math.min(255, dg | 0)) << 8)  |
+              (Math.max(0, Math.min(255, db | 0))));
+    }
 
     function drawStar(px, py, color, alpha, size) {
       ctx.fillStyle = `rgba(${color},${alpha.toFixed(3)})`;
@@ -850,6 +873,10 @@
       const ccx = Math.floor(cam[0] / CHUNK_SIZE);
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
       const ccz = Math.floor(cam[2] / CHUNK_SIZE);
+      // Relativistic β from current drift velocity (capped at 0.999).
+      // Drift at warp time saturates at near-c → strong aberration / Doppler.
+      const vEff = drifting ? DRIFT_V * TIME_MUL : 0;
+      const beta = Math.min(0.999, vEff / C);
 
       // Iterate chunks in front of camera (plus small back margin for objects just passed)
       const minDz = -1;
@@ -880,7 +907,10 @@
                 nearestRThisFrame = obj.physRadius || 1e6;
               }
               if (d2 > renderD2) continue;
-              const proj = project(ox, oy, oz);
+              // Relativistic aberration: shift apparent direction toward velocity vector.
+              const [aox, aoy, aoz, cosTp] = aberrate(ox, oy, oz, beta);
+              if (aoz <= 1e6) continue; // behind/near plane post-aberration
+              const proj = project(aox, aoy, aoz);
               if (!proj) continue;
               if (proj.px < -50 || proj.px > W + 50 || proj.py < -50 || proj.py > H + 50) continue;
 
@@ -933,15 +963,26 @@
                   ctx.fillStyle = halo;
                   ctx.beginPath(); ctx.arc(proj.px, proj.py, angRad * 3, 0, Math.PI * 2); ctx.fill();
                 } else {
-                  // Distant point source — brightness-driven pixel size (current style)
+                  // Distant point source — brightness-driven pixel size + Doppler+beaming
                   const size = Math.max(0.5, depth * 3.2 * obj.sizeMul);
-                  const a = obj.bri * (0.15 + depth * 0.8);
+                  let a = obj.bri * (0.15 + depth * 0.8);
+                  let cr = obj.cr, cg = obj.cg, cb = obj.cb;
+                  if (beta > 0.01) {
+                    const gamma = 1 / Math.sqrt(1 - beta * beta);
+                    const D = gamma * (1 + beta * cosTp);
+                    const dop = dopplerColor(cr, cg, cb, D);
+                    cr = (dop >> 16) & 0xff;
+                    cg = (dop >> 8) & 0xff;
+                    cb = dop & 0xff;
+                    // Relativistic beaming: intensity ∝ D^3 (capped to avoid overflow)
+                    a = Math.min(1, a * Math.min(8, D * D * D));
+                  }
                   if (dark) {
-                    drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, a, size);
+                    drawStar(proj.px, proj.py, `${cr},${cg},${cb}`, a, size);
                   } else {
-                    const rr = Math.min(60, Math.floor(255 - obj.cr) * 0.3 | 0);
-                    const gg = Math.min(60, Math.floor(255 - obj.cg) * 0.3 | 0);
-                    const bb = Math.min(60, Math.floor(255 - obj.cb) * 0.3 | 0);
+                    const rr = Math.min(60, Math.floor(255 - cr) * 0.3 | 0);
+                    const gg = Math.min(60, Math.floor(255 - cg) * 0.3 | 0);
+                    const bb = Math.min(60, Math.floor(255 - cb) * 0.3 | 0);
                     drawStar(proj.px, proj.py, `${rr},${gg},${bb}`, a * 0.6, size);
                   }
                 }
