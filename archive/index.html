@@ -121,13 +121,27 @@
       return SPECTRAL[SPECTRAL.length - 1];
     }
 
-    const PLANET_PALETTE = [
-      [180, 120, 80],   // rocky brown
-      [200, 180, 130],  // sandy
-      [110, 160, 220],  // ice/water
-      [200, 90, 80],    // mars-red
-      [230, 220, 200],  // pale
+    // Planet archetypes — each defines a base color and a render style. The
+    // generator picks one from this list with the given weight, then renderer
+    // draws type-specific realistic features (bands, craters, clouds, lava…).
+    const PLANET_TYPES = [
+      { kind: 'rocky',     color: [150, 110, 80],   weight: 0.30 }, // mercury/moon
+      { kind: 'desert',    color: [200, 150, 95],   weight: 0.15 }, // mars/tatooine
+      { kind: 'ocean',     color: [80, 130, 200],   weight: 0.15 }, // earth-like
+      { kind: 'iceworld',  color: [200, 220, 240],  weight: 0.10 }, // europa
+      { kind: 'gas_giant', color: [210, 175, 140],  weight: 0.16 }, // jupiter/saturn
+      { kind: 'ice_giant', color: [110, 170, 220],  weight: 0.08 }, // uranus/neptune
+      { kind: 'lava',      color: [200, 70, 40],    weight: 0.04 }, // hot rocky
+      { kind: 'shrouded',  color: [210, 200, 130],  weight: 0.02 }, // venus-like sulfur
     ];
+    function pickPlanetType(r) {
+      let acc = 0;
+      for (const t of PLANET_TYPES) {
+        acc += t.weight;
+        if (r < acc) return t;
+      }
+      return PLANET_TYPES[0];
+    }
     const NEBULA_PALETTE = [
       [180, 100, 220],
       [220, 90, 150],
@@ -164,13 +178,18 @@
           obj.physRadius = cls[4] * (0.7 + r() * 0.6); // 70%-130% of class typical
           obj.bri = 0.5 + r() * 0.5;
         } else if (t < 0.95) {
-          const p = PLANET_PALETTE[Math.floor(r() * PLANET_PALETTE.length)];
+          const pt = pickPlanetType(r());
           obj.type = 'planet';
-          obj.cr = p[0]; obj.cg = p[1]; obj.cb = p[2];
-          // physical radius in meters: 1e7 (small rocky) to 5e8 (gas giant) plus rare super-jupiter
-          obj.physRadius = 1e7 + r() * 5e8;
-          if (r() < 0.05) obj.physRadius *= 3;
-          obj.hasRing = r() < 0.18;
+          obj.kind = pt.kind;
+          obj.cr = pt.color[0]; obj.cg = pt.color[1]; obj.cb = pt.color[2];
+          // Physical radius depends on kind — gas/ice giants are large, rocky are small
+          if (pt.kind === 'gas_giant') obj.physRadius = 4e7 + r() * 8e7;       // 40-120k km
+          else if (pt.kind === 'ice_giant') obj.physRadius = 2e7 + r() * 5e7;  // 20-70k km
+          else if (pt.kind === 'shrouded')  obj.physRadius = 5e6 + r() * 1.5e7;
+          else if (pt.kind === 'lava')      obj.physRadius = 2e6 + r() * 8e6;
+          else obj.physRadius = 1.5e6 + r() * 1.2e7;                            // rocky/desert/ocean/ice
+          // Rings: more common on gas giants
+          obj.hasRing = r() < (pt.kind === 'gas_giant' ? 0.55 : 0.05);
         } else if (t < 0.992) {
           const n = NEBULA_PALETTE[Math.floor(r() * NEBULA_PALETTE.length)];
           obj.type = 'nebula';
@@ -382,6 +401,156 @@
       ctx.fillRect(px - size / 2, py - size / 2, size, size);
     }
 
+    // ===== type-specific realistic surface rendering =====
+    function renderPlanetSurface(ctx, px, py, rad, obj) {
+      const r = mulberry32(objHash(obj));
+      const kind = obj.kind || 'rocky';
+      ctx.save();
+      ctx.beginPath(); ctx.arc(px, py, rad, 0, Math.PI * 2); ctx.clip();
+
+      if (kind === 'gas_giant' || kind === 'ice_giant') {
+        // Zonal bands: parallel stripes of varying brightness across the disc
+        const bands = 8 + Math.floor(r() * 6);
+        for (let b = 0; b < bands; b++) {
+          const t0 = b / bands;
+          const t1 = (b + 1) / bands;
+          const y0 = py + (t0 * 2 - 1) * rad;
+          const y1 = py + (t1 * 2 - 1) * rad;
+          const k = kind === 'gas_giant' ? 0.65 + r() * 0.55 : 0.80 + r() * 0.30;
+          const drift = (r() - 0.5) * 30;
+          const cr = Math.max(0, Math.min(255, Math.floor(obj.cr * k + drift)));
+          const cg = Math.max(0, Math.min(255, Math.floor(obj.cg * k + drift)));
+          const cb = Math.max(0, Math.min(255, Math.floor(obj.cb * k + drift)));
+          ctx.fillStyle = `rgba(${cr},${cg},${cb},${kind === 'gas_giant' ? 0.55 : 0.35})`;
+          ctx.fillRect(px - rad, y0, rad * 2, y1 - y0);
+        }
+        // A single big storm spot on gas giants
+        if (kind === 'gas_giant' && rad > 12) {
+          const stormX = px + (r() - 0.5) * rad * 0.7;
+          const stormY = py + (r() - 0.5) * rad * 0.6;
+          const stormR = rad * (0.10 + r() * 0.12);
+          const sg = ctx.createRadialGradient(stormX, stormY, 0, stormX, stormY, stormR);
+          sg.addColorStop(0, 'rgba(210,80,55,0.85)');
+          sg.addColorStop(0.7, 'rgba(160,55,40,0.5)');
+          sg.addColorStop(1, 'rgba(160,55,40,0)');
+          ctx.fillStyle = sg;
+          ctx.beginPath(); ctx.ellipse(stormX, stormY, stormR * 1.6, stormR, 0, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (kind === 'ocean') {
+        // Continents — irregular darker green-brown blobs
+        const conts = 3 + Math.floor(r() * 4);
+        for (let c = 0; c < conts; c++) {
+          const ang = r() * Math.PI * 2;
+          const dist = Math.sqrt(r()) * rad * 0.8;
+          const cx0 = px + Math.cos(ang) * dist;
+          const cy0 = py + Math.sin(ang) * dist;
+          const cR = rad * (0.12 + r() * 0.22);
+          ctx.fillStyle = `rgba(${90 + r() * 60 | 0},${110 + r() * 60 | 0},${60 + r() * 40 | 0},0.62)`;
+          ctx.beginPath();
+          // Lumpy continent: combine a few overlapping arcs
+          for (let s = 0; s < 5; s++) {
+            const sa = r() * Math.PI * 2;
+            const sd = r() * cR * 0.6;
+            const sR = cR * (0.55 + r() * 0.5);
+            ctx.arc(cx0 + Math.cos(sa) * sd, cy0 + Math.sin(sa) * sd, sR, 0, Math.PI * 2);
+          }
+          ctx.fill();
+        }
+        // Cloud bands — wispy whites
+        if (rad > 10) {
+          const cBands = 2 + Math.floor(r() * 3);
+          for (let b = 0; b < cBands; b++) {
+            const cy0 = py + (r() - 0.5) * rad * 1.6;
+            const w = rad * (0.4 + r() * 0.8);
+            const h = rad * (0.05 + r() * 0.07);
+            ctx.fillStyle = `rgba(255,255,255,${(0.16 + r() * 0.14).toFixed(2)})`;
+            ctx.beginPath();
+            ctx.ellipse(px + (r() - 0.5) * rad * 0.4, cy0, w, h, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      } else if (kind === 'lava') {
+        // Dark crusted surface with bright glowing cracks/lava pools
+        ctx.fillStyle = 'rgba(40,15,8,0.55)';
+        ctx.fillRect(px - rad, py - rad, rad * 2, rad * 2);
+        const pools = 8 + Math.floor(r() * 12);
+        for (let i = 0; i < pools; i++) {
+          const ang = r() * Math.PI * 2;
+          const dist = Math.sqrt(r()) * rad * 0.95;
+          const lx = px + Math.cos(ang) * dist;
+          const ly = py + Math.sin(ang) * dist;
+          const lr = rad * (0.04 + r() * 0.14);
+          const lg = ctx.createRadialGradient(lx, ly, 0, lx, ly, lr);
+          lg.addColorStop(0, 'rgba(255,200,80,0.95)');
+          lg.addColorStop(0.4, 'rgba(255,90,30,0.7)');
+          lg.addColorStop(1, 'rgba(180,30,10,0)');
+          ctx.fillStyle = lg;
+          ctx.beginPath(); ctx.arc(lx, ly, lr, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (kind === 'shrouded') {
+        // Smooth thick atmosphere with subtle swirls
+        const swirls = 4 + Math.floor(r() * 4);
+        for (let i = 0; i < swirls; i++) {
+          const ang = r() * Math.PI * 2;
+          const dist = Math.sqrt(r()) * rad * 0.7;
+          const cx0 = px + Math.cos(ang) * dist;
+          const cy0 = py + Math.sin(ang) * dist;
+          const cR = rad * (0.18 + r() * 0.25);
+          const cg = ctx.createRadialGradient(cx0, cy0, 0, cx0, cy0, cR);
+          cg.addColorStop(0, `rgba(${(obj.cr + 30) | 0},${(obj.cg + 25) | 0},${(obj.cb + 15) | 0},0.4)`);
+          cg.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = cg;
+          ctx.beginPath(); ctx.arc(cx0, cy0, cR, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (kind === 'iceworld') {
+        // Mostly white with subtle cracks and small darker patches
+        const cracks = 3 + Math.floor(r() * 4);
+        ctx.strokeStyle = 'rgba(80,100,140,0.45)';
+        ctx.lineWidth = Math.max(0.5, rad * 0.012);
+        for (let i = 0; i < cracks; i++) {
+          const a0 = r() * Math.PI * 2;
+          const a1 = a0 + (r() - 0.5) * Math.PI;
+          const r0 = r() * rad;
+          const r1 = r() * rad;
+          ctx.beginPath();
+          ctx.moveTo(px + Math.cos(a0) * r0, py + Math.sin(a0) * r0);
+          ctx.lineTo(px + Math.cos(a1) * r1, py + Math.sin(a1) * r1);
+          ctx.stroke();
+        }
+        // Sparse darker spots
+        const spots = 4 + Math.floor(r() * 6);
+        for (let i = 0; i < spots; i++) {
+          const ang = r() * Math.PI * 2;
+          const dist = Math.sqrt(r()) * rad;
+          const sx = px + Math.cos(ang) * dist;
+          const sy = py + Math.sin(ang) * dist;
+          const sR = rad * (0.03 + r() * 0.08);
+          ctx.fillStyle = `rgba(150,170,190,0.35)`;
+          ctx.beginPath(); ctx.arc(sx, sy, sR, 0, Math.PI * 2); ctx.fill();
+        }
+      } else {
+        // rocky / desert — cratered surface (deterministic crater field)
+        const craters = 6 + Math.floor(Math.min(40, rad / 5));
+        for (let i = 0; i < craters; i++) {
+          const ang = r() * Math.PI * 2;
+          const dist = Math.sqrt(r()) * rad * 0.97;
+          const cx0 = px + Math.cos(ang) * dist;
+          const cy0 = py + Math.sin(ang) * dist;
+          const cR = rad * (0.025 + Math.pow(r(), 2.5) * 0.16);
+          // Each crater: darker fill + a bright rim
+          const dim = 0.45 + r() * 0.25;
+          ctx.fillStyle = `rgba(${(obj.cr * dim) | 0},${(obj.cg * dim) | 0},${(obj.cb * dim) | 0},0.55)`;
+          ctx.beginPath(); ctx.arc(cx0, cy0, cR, 0, Math.PI * 2); ctx.fill();
+          if (cR > 1.2) {
+            ctx.strokeStyle = `rgba(${Math.min(255, obj.cr + 35)},${Math.min(255, obj.cg + 30)},${Math.min(255, obj.cb + 25)},0.55)`;
+            ctx.lineWidth = Math.max(0.4, cR * 0.18);
+            ctx.beginPath(); ctx.arc(cx0, cy0, cR, 0, Math.PI * 2); ctx.stroke();
+          }
+        }
+      }
+      ctx.restore();
+    }
+
     function frame(nowMs) {
       const dt = Math.min(0.1, (nowMs - lastFrameMs) / 1000);
       lastFrameMs = nowMs;
@@ -535,26 +704,24 @@
                   ctx.beginPath();
                   ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2);
                   ctx.fill();
-                  // LOD: surface continents (clipped to planet disc)
-                  if (rad > 6) {
-                    const r = mulberry32(objHash(obj));
+                  // LOD: realistic surface rendering per planet kind
+                  if (rad > 5) {
+                    renderPlanetSurface(ctx, proj.px, proj.py, rad, obj);
+                  }
+                  // LOD: terminator shading (day/night line) when close
+                  if (rad > 15) {
+                    const term = ctx.createLinearGradient(proj.px - rad, proj.py, proj.px + rad, proj.py);
+                    term.addColorStop(0, 'rgba(0,0,0,0)');
+                    term.addColorStop(0.7, 'rgba(0,0,0,0)');
+                    term.addColorStop(1, 'rgba(0,0,0,0.55)');
                     ctx.save();
                     ctx.beginPath(); ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2); ctx.clip();
-                    const spotCount = 4 + Math.floor(Math.min(20, rad / 8));
-                    for (let s = 0; s < spotCount; s++) {
-                      const ang = r() * Math.PI * 2;
-                      const dist = r() * rad * 0.95;
-                      const sx = proj.px + Math.cos(ang) * dist;
-                      const sy = proj.py + Math.sin(ang) * dist;
-                      const spotR = rad * (0.06 + r() * 0.22);
-                      const k = 0.45 + r() * 0.3;
-                      ctx.fillStyle = `rgba(${(obj.cr * k) | 0},${(obj.cg * k) | 0},${(obj.cb * k) | 0},0.45)`;
-                      ctx.beginPath(); ctx.arc(sx, sy, spotR, 0, Math.PI * 2); ctx.fill();
-                    }
+                    ctx.fillStyle = term;
+                    ctx.fillRect(proj.px - rad, proj.py - rad, rad * 2, rad * 2);
                     ctx.restore();
                   }
-                  // LOD: atmospheric limb glow (only when close enough to read)
-                  if (rad > 25) {
+                  // LOD: atmospheric limb glow (only for worlds with atmospheres)
+                  if (rad > 25 && (obj.kind === 'ocean' || obj.kind === 'gas_giant' || obj.kind === 'ice_giant' || obj.kind === 'shrouded')) {
                     const ar = Math.min(255, obj.cr + 60);
                     const ag = Math.min(255, obj.cg + 60);
                     const ab = Math.min(255, obj.cb + 60);
