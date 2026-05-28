@@ -176,7 +176,7 @@ const items: Item[] = [
           expand(a, !isExpanded);
         }
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        history.replaceState(null, '', `#${id}`);
+        history.replaceState(null, '', location.pathname + location.search + '#' + id);
       });
     });
   }
