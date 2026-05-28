@@ -42,6 +42,7 @@
     let lastSavedMs = 0;
     let lastNearestD = Infinity; // distance to closest object, tracked each frame for auto-slowdown
     let lastNearestR = 0;        // physical radius of that object — sets a minimum movement speed
+    let shiftHold = 0;           // seconds Shift has been held while moving; drives ramp acceleration
     const chunkCache = new Map();
 
     function readInitial() {
@@ -807,14 +808,22 @@
       // navigation stays precise. Shift for warp cruise (also scaled but capped).
       if (keys.size) {
         const isShift = keys.has('shift') || keys.has('Shift');
+        const isMoving = keys.has('w') || keys.has('a') || keys.has('s') || keys.has('d') ||
+                         keys.has('q') || keys.has('e') || keys.has(' ');
+        // Ramp the shift multiplier — starts at 1×, exponentially grows to 1e6×
+        // over ~3 seconds of holding Shift while moving. Reset on release of
+        // either Shift or all movement keys.
+        if (isShift && isMoving) shiftHold += dt;
+        else shiftHold = 0;
+        const shiftMul = isShift ? Math.min(1e6, Math.exp(shiftHold * 4.6)) : 1;
+
         const proxFactor = lastNearestD === Infinity
           ? 1
           : Math.min(1, Math.max(0.005, lastNearestD / 1e13));
-        const base = isShift ? 1e16 : 1e10;
-        // Floor: at least cross 1 object-radius per ~1-2 seconds at base, or
-        // 10 radii per second with Shift. Keeps movement usable around any object.
-        const sizeFloor = lastNearestR * (isShift ? 10 : 0.8);
-        const speed = Math.max(base * proxFactor, sizeFloor);
+        const base = 1e10;
+        const sizeFloor = lastNearestR * 0.8;
+        let speed = Math.max(base * proxFactor, sizeFloor);
+        speed *= shiftMul;
         const mv = speed * dt;
         if (keys.has('w')) cam[2] += mv;
         if (keys.has('s')) cam[2] -= mv;
