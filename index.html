@@ -40,6 +40,7 @@
     let drifting = true;
     let lastFrameMs = performance.now();
     let lastSavedMs = 0;
+    let lastNearestD = Infinity; // distance to closest object, tracked each frame for auto-slowdown
     const chunkCache = new Map();
 
     function readInitial() {
@@ -566,6 +567,85 @@
       return canvasT;
     }
 
+    // ===== star photosphere texture cache =====
+    const starTexCache = new Map();
+    const STAR_TEX_LIMIT = 80;
+    const STAR_TEX_SIZE = 256;
+    function getStarTexture(obj) {
+      const key = objHash(obj);
+      let tex = starTexCache.get(key);
+      if (tex) return tex;
+      tex = buildStarTexture(obj, key);
+      if (starTexCache.size >= STAR_TEX_LIMIT) {
+        const firstKey = starTexCache.keys().next().value;
+        starTexCache.delete(firstKey);
+      }
+      starTexCache.set(key, tex);
+      return tex;
+    }
+    function buildStarTexture(obj, seed) {
+      const SIZE = STAR_TEX_SIZE;
+      const canvasT = document.createElement('canvas');
+      canvasT.width = SIZE;
+      canvasT.height = SIZE;
+      const cx2 = canvasT.getContext('2d');
+      const id = cx2.createImageData(SIZE, SIZE);
+      const data = id.data;
+      const center = SIZE / 2;
+      const radPx = center - 1;
+      // Deterministic sunspot pairs (magnetic bipolar regions)
+      const r = mulberry32(seed);
+      const numSpotPairs = Math.floor(r() * 4); // 0-3 pairs
+      const spots = [];
+      for (let i = 0; i < numSpotPairs; i++) {
+        const baseX = (r() - 0.5) * 1.4;
+        const baseY = (r() - 0.5) * 1.4;
+        const offset = 0.05 + r() * 0.08;
+        const ang = r() * Math.PI * 2;
+        const size = 0.025 + r() * 0.04;
+        spots.push({ x: baseX + Math.cos(ang) * offset, y: baseY + Math.sin(ang) * offset, size });
+        spots.push({ x: baseX - Math.cos(ang) * offset, y: baseY - Math.sin(ang) * offset, size });
+      }
+      // Base color brightness boost (stars are very bright)
+      const br = Math.min(255, obj.cr * 1.1);
+      const bg = Math.min(255, obj.cg * 1.1);
+      const bb = Math.min(255, obj.cb * 1.1);
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          const dx = (x - center) / radPx;
+          const dy = (y - center) / radPx;
+          const r2 = dx * dx + dy * dy;
+          const i = (y * SIZE + x) * 4;
+          if (r2 >= 1) { data[i + 3] = 0; continue; }
+          const z = Math.sqrt(1 - r2);
+          // Convection cell granulation: fbm gives soft cellular pattern
+          const gran = fbm2(dx * 22, dy * 22, seed, 4);
+          // Cell-edge darkening: distance from mid-noise
+          const cellShade = 0.75 + 0.5 * gran; // 0.75-1.25
+          // Limb darkening — physically motivated: I/I0 = a + b*mu
+          const limb = 0.35 + 0.65 * z;
+          // Sunspots
+          let spotShade = 1;
+          for (let s = 0; s < spots.length; s++) {
+            const sp = spots[s];
+            const sd2 = (dx - sp.x) * (dx - sp.x) + (dy - sp.y) * (dy - sp.y);
+            if (sd2 < sp.size * sp.size * 2.25) {
+              const t = Math.sqrt(sd2) / sp.size;
+              if (t < 1) spotShade = Math.min(spotShade, 0.22);
+              else if (t < 1.5) spotShade = Math.min(spotShade, 0.55);
+            }
+          }
+          const I = cellShade * limb * spotShade;
+          data[i]     = Math.min(255, (br * I) | 0);
+          data[i + 1] = Math.min(255, (bg * I) | 0);
+          data[i + 2] = Math.min(255, (bb * I) | 0);
+          data[i + 3] = 255;
+        }
+      }
+      cx2.putImageData(id, 0, 0);
+      return canvasT;
+    }
+
     // ===== type-specific realistic surface rendering (legacy / unused fallback) =====
     function renderPlanetSurface(ctx, px, py, rad, obj) {
       const r = mulberry32(objHash(obj));
@@ -719,12 +799,18 @@
     function frame(nowMs) {
       const dt = Math.min(0.1, (nowMs - lastFrameMs) / 1000);
       lastFrameMs = nowMs;
+      const tAnim = nowMs / 1000; // wall-clock seconds, drives dynamic effects (BH rotation, etc.)
       if (drifting) cam[2] += DRIFT_V * dt * TIME_MUL;
-      // Manual WASD/QE — slow precision by default (good for approaching a star);
-      // hold Shift to cruise at light-year scale.
+      // Manual WASD/QE — auto-scales by proximity to nearest object.
+      // Far from anything: full speed. Approach an object → smooth slowdown so
+      // navigation stays precise. Shift for warp cruise (also scaled but capped).
       if (keys.size) {
         const isShift = keys.has('shift') || keys.has('Shift');
-        const speed = isShift ? 1e16 : 1e10; // m/s — 1 ly/s vs ~33c
+        const proxFactor = lastNearestD === Infinity
+          ? 1
+          : Math.min(1, Math.max(0.0008, lastNearestD / 1e13));
+        const base = isShift ? 1e16 : 1e10;
+        const speed = base * proxFactor;
         const mv = speed * dt;
         if (keys.has('w')) cam[2] += mv;
         if (keys.has('s')) cam[2] -= mv;
@@ -760,6 +846,7 @@
       // Two-pass: nebulae & black holes drawn separately to handle compositing
       const nebulaeDraw = [];
       const blackHolesDraw = [];
+      let nearestThisFrame = Infinity;
 
       for (let dx = -N_RADIUS; dx <= N_RADIUS; dx++) {
         for (let dy = -N_RADIUS; dy <= N_RADIUS; dy++) {
@@ -774,6 +861,7 @@
               const oy = obj.wy - cam[1];
               const oz = obj.wz - cam[2];
               const d2 = ox * ox + oy * oy + oz * oz;
+              if (d2 < nearestThisFrame) nearestThisFrame = d2;
               if (d2 > renderD2) continue;
               const proj = project(ox, oy, oz);
               if (!proj) continue;
@@ -785,55 +873,43 @@
               if (obj.type === 'star') {
                 // True angular radius in screen pixels
                 const angRad = obj.physRadius / 1e15 * proj.k;
-                if (angRad > 2) {
-                  // Close enough to render as a glowing disc with corona
+                if (angRad > 6) {
+                  // Close: full procedural photosphere (granulation + limb darkening + sunspots)
+                  const tex = getStarTexture(obj);
+                  ctx.drawImage(tex, proj.px - angRad, proj.py - angRad, angRad * 2, angRad * 2);
+                  // Corona / halo on top
+                  const halo = ctx.createRadialGradient(proj.px, proj.py, angRad, proj.px, proj.py, angRad * 3.5);
+                  halo.addColorStop(0, `rgba(${obj.cr},${obj.cg},${obj.cb},0.45)`);
+                  halo.addColorStop(1, `rgba(${obj.cr},${obj.cg},${obj.cb},0)`);
+                  ctx.fillStyle = halo;
+                  ctx.beginPath(); ctx.arc(proj.px, proj.py, angRad * 3.5, 0, Math.PI * 2); ctx.fill();
+                  // LOD: prominences flaring off the limb (dynamic — pulse with time)
+                  if (angRad > 30) {
+                    const rng = mulberry32(objHash(obj) ^ 0xBADC0DE);
+                    const prom = 2 + Math.floor(rng() * 4);
+                    for (let p = 0; p < prom; p++) {
+                      const ang = rng() * Math.PI * 2;
+                      const phase = rng() * Math.PI * 2;
+                      const pulse = 0.65 + 0.35 * Math.sin(tAnim * 0.8 + phase);
+                      const px = proj.px + Math.cos(ang) * angRad;
+                      const py = proj.py + Math.sin(ang) * angRad;
+                      const flareR = angRad * (0.16 + rng() * 0.22) * pulse;
+                      const flare = ctx.createRadialGradient(px, py, 0, px, py, flareR);
+                      flare.addColorStop(0, `rgba(255,170,80,${(0.75 * pulse).toFixed(2)})`);
+                      flare.addColorStop(0.6, `rgba(255,90,40,${(0.3 * pulse).toFixed(2)})`);
+                      flare.addColorStop(1, 'rgba(255,40,20,0)');
+                      ctx.fillStyle = flare;
+                      ctx.beginPath(); ctx.arc(px, py, flareR, 0, Math.PI * 2); ctx.fill();
+                    }
+                  }
+                } else if (angRad > 2) {
+                  // Medium: simple gradient disc + small halo
                   const disc = ctx.createRadialGradient(proj.px, proj.py, 0, proj.px, proj.py, angRad);
                   disc.addColorStop(0,   `rgba(${Math.min(255, obj.cr + 60)},${Math.min(255, obj.cg + 60)},${Math.min(255, obj.cb + 60)},1)`);
                   disc.addColorStop(0.85, `rgba(${obj.cr},${obj.cg},${obj.cb},0.95)`);
                   disc.addColorStop(1,   `rgba(${obj.cr},${obj.cg},${obj.cb},0)`);
                   ctx.fillStyle = disc;
                   ctx.beginPath(); ctx.arc(proj.px, proj.py, angRad, 0, Math.PI * 2); ctx.fill();
-                  // LOD: surface granulation (clipped to disc)
-                  if (angRad > 18) {
-                    const r = mulberry32(objHash(obj));
-                    ctx.save();
-                    ctx.beginPath(); ctx.arc(proj.px, proj.py, angRad * 0.98, 0, Math.PI * 2); ctx.clip();
-                    const granules = 20 + Math.floor(Math.min(60, angRad / 6));
-                    for (let s = 0; s < granules; s++) {
-                      const ang = r() * Math.PI * 2;
-                      const dist = Math.sqrt(r()) * angRad * 0.97;
-                      const sx = proj.px + Math.cos(ang) * dist;
-                      const sy = proj.py + Math.sin(ang) * dist;
-                      const spotR = angRad * (0.015 + r() * 0.045);
-                      // Mix darker (cool downflows) and brighter (hot upflows) cells
-                      const bright = r() > 0.5;
-                      const k = bright ? 1.18 : 0.72;
-                      const cr = Math.min(255, (obj.cr * k) | 0);
-                      const cg = Math.min(255, (obj.cg * k) | 0);
-                      const cb = Math.min(255, (obj.cb * k) | 0);
-                      ctx.fillStyle = `rgba(${cr},${cg},${cb},${bright ? 0.55 : 0.45})`;
-                      ctx.beginPath(); ctx.arc(sx, sy, spotR, 0, Math.PI * 2); ctx.fill();
-                    }
-                    ctx.restore();
-                  }
-                  // LOD: prominences flaring off the limb
-                  if (angRad > 40) {
-                    const r = mulberry32(objHash(obj) ^ 0xBADC0DE);
-                    const prom = 2 + Math.floor(r() * 4);
-                    for (let p = 0; p < prom; p++) {
-                      const ang = r() * Math.PI * 2;
-                      const px = proj.px + Math.cos(ang) * angRad;
-                      const py = proj.py + Math.sin(ang) * angRad;
-                      const flareR = angRad * (0.18 + r() * 0.25);
-                      const flare = ctx.createRadialGradient(px, py, 0, px, py, flareR);
-                      flare.addColorStop(0, 'rgba(255,170,80,0.7)');
-                      flare.addColorStop(0.6, 'rgba(255,90,40,0.25)');
-                      flare.addColorStop(1, 'rgba(255,40,20,0)');
-                      ctx.fillStyle = flare;
-                      ctx.beginPath(); ctx.arc(px, py, flareR, 0, Math.PI * 2); ctx.fill();
-                    }
-                  }
-                  // Corona / halo
                   const halo = ctx.createRadialGradient(proj.px, proj.py, angRad, proj.px, proj.py, angRad * 3);
                   halo.addColorStop(0, `rgba(${obj.cr},${obj.cg},${obj.cb},0.35)`);
                   halo.addColorStop(1, `rgba(${obj.cr},${obj.cg},${obj.cb},0)`);
@@ -986,27 +1062,35 @@
           ctx.arc(bh.proj.px, bh.proj.py, rEH * 1.5, 0, Math.PI * 2);
           ctx.stroke();
         } else {
-          // LOD: tilted accretion disc with bright/dim Doppler asymmetry
+          // LOD: tilted accretion disc with dynamic rotation (bright sector orbits)
           const r = mulberry32(objHash(bh.obj));
-          const tilt = (r() - 0.5) * 0.6 + 0.35; // radians, slight randomized tilt
+          const tilt = (r() - 0.5) * 0.6 + 0.35;
+          const rotSpeed = 0.35 + r() * 0.4; // radians/sec
+          const orbitPhase = tAnim * rotSpeed;
           ctx.save();
           ctx.translate(bh.proj.px, bh.proj.py);
           ctx.rotate(tilt);
-          const bands = 6;
+          const bands = 7;
           for (let b = 0; b < bands; b++) {
             const t = b / (bands - 1);
-            const rBand = rEH * (1.4 + t * 2.2);
+            const rBand = rEH * (1.4 + t * 2.4);
             const minor = rBand * 0.22;
             const hueBase = 22 + t * 18;
-            const alpha = (0.85 - t * 0.55).toFixed(2);
-            const gradH = ctx.createLinearGradient(-rBand, 0, rBand, 0);
-            gradH.addColorStop(0, `hsla(${hueBase + 20}, 90%, 70%, ${alpha})`);
-            gradH.addColorStop(0.5, `hsla(${hueBase}, 80%, 50%, ${alpha})`);
-            gradH.addColorStop(1, `hsla(${hueBase - 12}, 70%, 32%, ${alpha})`);
-            ctx.strokeStyle = gradH;
-            ctx.lineWidth = Math.max(0.8, rEH * 0.18);
+            const baseAlpha = (0.85 - t * 0.55);
+            // Static base band (full ellipse, dim)
+            ctx.strokeStyle = `hsla(${hueBase}, 80%, 50%, ${(baseAlpha * 0.55).toFixed(2)})`;
+            ctx.lineWidth = Math.max(0.8, rEH * 0.16);
             ctx.beginPath();
             ctx.ellipse(0, 0, rBand, minor, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            // Bright orbiting sector — rotates over time, each band at a slightly
+            // different angular velocity to suggest Keplerian shear
+            const sectorPhase = orbitPhase * (1 + b * 0.18);
+            const arcSpan = 1.4;
+            ctx.strokeStyle = `hsla(${hueBase + 25}, 95%, 70%, ${baseAlpha.toFixed(2)})`;
+            ctx.lineWidth = Math.max(1, rEH * 0.2);
+            ctx.beginPath();
+            ctx.ellipse(0, 0, rBand, minor, 0, sectorPhase - arcSpan / 2, sectorPhase + arcSpan / 2);
             ctx.stroke();
           }
           ctx.restore();
@@ -1024,6 +1108,7 @@
         ctx.fill();
       }
 
+      lastNearestD = nearestThisFrame === Infinity ? Infinity : Math.sqrt(nearestThisFrame);
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
