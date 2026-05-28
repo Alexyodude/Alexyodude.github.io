@@ -169,6 +169,7 @@
     let pitch = 0;   // rotation around camera-local X axis (right-click drag vertical)
     let drifting = true;
     let lastCamV = 0; // last frame's instantaneous speed (m/s), used by UI
+    let smoothBeta = 0; // β smoothed across frames — gives a gradual ramp on Shift warp
     let lastFrameMs = performance.now();
     let lastSavedMs = 0;
     let lastNearestD = Infinity; // distance to closest object, tracked each frame for auto-slowdown
@@ -418,9 +419,8 @@
       elX.textContent = fmt(cam[0]);
       elY.textContent = fmt(cam[1]);
       elZ.textContent = fmt(cam[2]);
-      const b = Math.min(0.999, lastCamV / C);
       elV.textContent = fmtVelocity(lastCamV);
-      elB.textContent = b.toFixed(4) + (b >= 0.999 ? ' (max)' : '');
+      elB.textContent = smoothBeta.toFixed(4) + (smoothBeta >= 0.998 ? ' (max)' : '');
     }
     refreshUI();
 
@@ -593,14 +593,23 @@
       const scale = sinT > 1e-9 ? sinTp / sinT : 1;
       return [dx * scale, dy * scale, r * cosTp, cosTp];
     }
-    // Doppler color shift: D > 1 blueshift, D < 1 redshift.
+    // Doppler color shift: D > 1 blueshift, D < 1 redshift. Tuned for
+    // subtle effects at low β (e.g. D≈1.36 at 0.3c → mild blue tint, not extreme).
     function dopplerColor(r, g, b, D) {
-      const dr = D > 1 ? r / D : r * (1 + (1 - D) * 0.9);
-      const dg = g * Math.pow(D, 0.4);
-      const db = D > 1 ? Math.min(255, b * D * 1.2) : b * D * D;
-      return ((Math.max(0, Math.min(255, dr | 0)) << 16) |
-              (Math.max(0, Math.min(255, dg | 0)) << 8)  |
-              (Math.max(0, Math.min(255, db | 0))));
+      const t = Math.max(-0.9, Math.min(2, D - 1));
+      let nr, ng, nb;
+      if (t >= 0) {
+        nr = r * (1 - t * 0.18);
+        ng = g * (1 - t * 0.05);
+        nb = b * (1 + t * 0.22);
+      } else {
+        nr = r * (1 + (-t) * 0.25);
+        ng = g * (1 + t * 0.05);
+        nb = b * (1 + t * 0.35);
+      }
+      return ((Math.max(0, Math.min(255, nr | 0)) << 16) |
+              (Math.max(0, Math.min(255, ng | 0)) << 8)  |
+              (Math.max(0, Math.min(255, nb | 0))));
     }
 
     function drawStar(px, py, color, alpha, size) {
@@ -1038,8 +1047,12 @@
         const proxFactor = lastNearestD === Infinity
           ? 1
           : Math.min(1, Math.max(0.005, lastNearestD / 1e13));
-        const base = 1e10;
-        const sizeFloor = lastNearestR * 0.8;
+        const base = 1e8; // ~0.33c default — sub-light so a tap of W doesn't pin β to 0.999
+        // sizeFloor only applies when close to an object, and is hard-capped so
+        // huge-radius objects (nebulae) don't make WASD warp instantly.
+        const sizeFloor = (lastNearestD < lastNearestR * 12)
+          ? Math.min(5e9, lastNearestR * 0.5)
+          : 0;
         let speed = Math.max(base * proxFactor, sizeFloor);
         speed *= shiftMul;
         const mv = speed * dt;
@@ -1074,9 +1087,11 @@
       const ccx = Math.floor(cam[0] / CHUNK_SIZE);
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
       const ccz = Math.floor(cam[2] / CHUNK_SIZE);
-      // Relativistic β from actual instantaneous camera velocity (drift + WASD).
-      // Saturates at 0.999 — Shift warp ramps up to this asymptotically.
-      const beta = Math.min(0.999, camV / C);
+      // Relativistic β smoothed across frames so it ramps gradually instead of
+      // snapping when Shift+W is tapped. Saturates at 0.999 (Shift warp ceiling).
+      const targetBeta = Math.min(0.999, camV / C);
+      smoothBeta += (targetBeta - smoothBeta) * Math.min(1, dt * 2.5);
+      const beta = smoothBeta;
 
       // Iterate the full cube around the camera (we can now look in any direction)
       const minDz = -N_RADIUS;
