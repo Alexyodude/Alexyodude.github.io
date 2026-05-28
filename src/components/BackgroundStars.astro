@@ -35,11 +35,11 @@
   </div>
   <div class="coord-help">WASD precise · Q/E up/down · Shift warp · right-click drag to look</div>
   <div class="coord-actions">
-    <span class="coord-help" style="margin:0">time</span>
+    <span class="coord-help" style="margin:0">drift v</span>
     <button type="button" class="coord-speed" data-mul="0.3">0.3c</button>
-    <button type="button" class="coord-speed" data-mul="86400">day/s</button>
-    <button type="button" class="coord-speed" data-mul="31557600">yr/s</button>
-    <button type="button" class="coord-speed" data-mul="31557600000">kyr/s</button>
+    <button type="button" class="coord-speed" data-mul="100">100c</button>
+    <button type="button" class="coord-speed" data-mul="100000">100kc</button>
+    <button type="button" class="coord-speed" data-mul="100000000">100Mc</button>
   </div>
 </aside>
 
@@ -153,14 +153,12 @@
     const RENDER_DISTANCE = 5e18;   // meters — about 530 light-years
     const CHUNK_SIZE      = 5e17;   // meters — about 53 light-years per chunk
     const N_RADIUS        = Math.ceil(RENDER_DISTANCE / CHUNK_SIZE); // chunks in each axis
-    // Drift is fixed at c (speed of light). Apparent motion comes from a
-    // simulated TIME dilation — visitors choose how many seconds of universe
-    // time pass per real second. Default = 1 year/sec (≈ 1 light-year/sec).
+    // Drift cruise velocity = c × TIME_MUL (capped at β=0.999 for relativistic
+    // effects). Animations (planet rotation, star flares, BH disc spin) run on
+    // wall-clock and are independent of drift.
     const C               = 299792458;
     const DRIFT_V         = C;          // m/s, fixed at speed of light
-    const SEC_PER_DAY     = 86400;
-    const SEC_PER_YEAR    = 31557600;
-    let TIME_MUL          = 0.3;  // default: 0.3c drift — gentle relativistic effects
+    let TIME_MUL          = 0.3;        // default cruise = 0.3c
     const TIME_DEFAULT    = 0.3;
     const CACHE_LIMIT     = 50000;  // chunk cache hard limit
     const FOCAL_BASE      = 0.95;   // multiplier × max(w,h)
