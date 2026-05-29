@@ -9,7 +9,34 @@ import ThemeToggle from './ThemeToggle.astro';
     </a>
     <div class="flex items-center gap-5">
       <a href="/" class="text-muted hover:text-accent">Home</a>
+      <button id="font-size-btn" type="button" aria-label="Cycle font size" class="text-muted hover:text-accent font-semibold">A↕</button>
       <ThemeToggle />
     </div>
   </div>
 </nav>
+
+<script is:inline>
+  (function () {
+    const SIZES = ['sm', 'md', 'lg', 'xl'];
+    function apply(s) {
+      document.documentElement.dataset.fontSize = s;
+      try { localStorage.setItem('fontSize', s); } catch {}
+    }
+    const initial = (() => {
+      try { return localStorage.getItem('fontSize') || 'md'; } catch { return 'md'; }
+    })();
+    apply(initial);
+    function init() {
+      const btn = document.getElementById('font-size-btn');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const cur = document.documentElement.dataset.fontSize || 'md';
+        const i = SIZES.indexOf(cur);
+        const next = SIZES[(i + 1) % SIZES.length];
+        apply(next);
+      });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  })();
+</script>

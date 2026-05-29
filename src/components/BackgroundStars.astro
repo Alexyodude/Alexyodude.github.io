@@ -33,7 +33,7 @@
     <button type="button" class="coord-visit" data-type="nebula">nebula</button>
     <button type="button" class="coord-visit" data-type="blackhole">black hole</button>
   </div>
-  <div class="coord-help">WASD precise · Q/E up/down · Shift warp · right-click drag to look</div>
+  <div class="coord-help">WASD precise · Q/E up/down · Shift warp · right-click drag to look · two-finger drag + pinch on touch</div>
   <div class="coord-actions">
     <span class="coord-help" style="margin:0">drift v</span>
     <button type="button" class="coord-speed" data-mul="0.3">0.3c</button>
@@ -519,6 +519,53 @@
       pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
     });
     window.addEventListener('mouseup', (e) => { if (e.button === 2) dragging = false; });
+
+    // ===== Touch: two-finger gestures (single-finger left alone for page scroll) =====
+    // Pan two fingers → rotate (yaw/pitch). Pinch in/out → move backward/forward.
+    let touchActive = false;
+    let lastT1x = 0, lastT1y = 0, lastT2x = 0, lastT2y = 0, lastTDist = 0;
+    function touchInPanel(e) {
+      const t = e.target;
+      return t && t.closest && t.closest('#coord-panel');
+    }
+    document.addEventListener('touchstart', (e) => {
+      if (e.touches.length < 2) { touchActive = false; return; }
+      if (touchInPanel(e)) return;
+      touchActive = true;
+      lastT1x = e.touches[0].clientX; lastT1y = e.touches[0].clientY;
+      lastT2x = e.touches[1].clientX; lastT2y = e.touches[1].clientY;
+      lastTDist = Math.hypot(lastT1x - lastT2x, lastT1y - lastT2y);
+      e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchmove', (e) => {
+      if (!touchActive) return;
+      if (e.touches.length < 2) { touchActive = false; return; }
+      const t1x = e.touches[0].clientX, t1y = e.touches[0].clientY;
+      const t2x = e.touches[1].clientX, t2y = e.touches[1].clientY;
+      // Pan: average centroid movement → yaw/pitch
+      const avgDx = ((t1x + t2x) / 2) - ((lastT1x + lastT2x) / 2);
+      const avgDy = ((t1y + t2y) / 2) - ((lastT1y + lastT2y) / 2);
+      const sens = 0.0045;
+      yaw   += avgDx * sens;
+      pitch -= avgDy * sens;
+      pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
+      // Pinch: distance change → forward/back thrust along camera forward
+      const dist = Math.hypot(t1x - t2x, t1y - t2y);
+      const pinchDelta = dist - lastTDist;
+      if (Math.abs(pinchDelta) > 0.5) {
+        // Map pixel pinch to a meaningful world-space velocity scale.
+        // Tied to a fraction of nearest object's radius so it's usable near anything.
+        const refScale = Math.max(1e9, Math.min(1e15, lastNearestR * 0.5 || 1e10));
+        const push = pinchDelta * refScale * 0.04;
+        cam[0] += fx * push; cam[1] += fy * push; cam[2] += fz * push;
+      }
+      lastT1x = t1x; lastT1y = t1y; lastT2x = t2x; lastT2y = t2y; lastTDist = dist;
+      e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) touchActive = false;
+    });
+    document.addEventListener('touchcancel', () => { touchActive = false; });
     // Suppress browser context menu — we use right-click for camera rotation
     document.addEventListener('contextmenu', (e) => {
       if (e.target && e.target.closest && e.target.closest('#coord-panel')) return;
