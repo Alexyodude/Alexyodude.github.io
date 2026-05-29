@@ -912,7 +912,8 @@
         // either Shift or all movement keys.
         if (isShift && isMoving) shiftHold += dt;
         else shiftHold = 0;
-        const shiftMul = isShift ? Math.min(1e6, Math.exp(shiftHold * 4.6)) : 1;
+        // Cap at 1e8 (100× previous limit). Reached at ~4s of holding.
+        const shiftMul = isShift ? Math.min(1e8, Math.exp(shiftHold * 4.6)) : 1;
 
         const proxFactor = lastNearestD === Infinity
           ? 1
