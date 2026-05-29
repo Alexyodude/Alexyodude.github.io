@@ -37,6 +37,8 @@
     let pitch = 0;   // rotation around camera-local X axis (right-click drag vertical)
     let drifting = true;
     let lastCamV = 0; // last frame's instantaneous speed (m/s), used by UI
+    let smoothBeta = 0; // β smoothed across frames — gives a gradual ramp on Shift warp
+    const velocity = [0, 0, 0]; // current world-space velocity (m/s); smoothed toward target for inertia
     let lastFrameMs = performance.now();
     let lastSavedMs = 0;
     let lastNearestD = Infinity; // distance to closest object, tracked each frame for auto-slowdown
@@ -286,9 +288,8 @@
       elX.textContent = fmt(cam[0]);
       elY.textContent = fmt(cam[1]);
       elZ.textContent = fmt(cam[2]);
-      const b = Math.min(0.999, lastCamV / C);
       elV.textContent = fmtVelocity(lastCamV);
-      elB.textContent = b.toFixed(4) + (b >= 0.999 ? ' (max)' : '');
+      elB.textContent = smoothBeta.toFixed(4) + (smoothBeta >= 0.998 ? ' (max)' : '');
     }
     refreshUI();
 
@@ -461,14 +462,23 @@
       const scale = sinT > 1e-9 ? sinTp / sinT : 1;
       return [dx * scale, dy * scale, r * cosTp, cosTp];
     }
-    // Doppler color shift: D > 1 blueshift, D < 1 redshift.
+    // Doppler color shift: D > 1 blueshift, D < 1 redshift. Tuned for
+    // subtle effects at low β (e.g. D≈1.36 at 0.3c → mild blue tint, not extreme).
     function dopplerColor(r, g, b, D) {
-      const dr = D > 1 ? r / D : r * (1 + (1 - D) * 0.9);
-      const dg = g * Math.pow(D, 0.4);
-      const db = D > 1 ? Math.min(255, b * D * 1.2) : b * D * D;
-      return ((Math.max(0, Math.min(255, dr | 0)) << 16) |
-              (Math.max(0, Math.min(255, dg | 0)) << 8)  |
-              (Math.max(0, Math.min(255, db | 0))));
+      const t = Math.max(-0.9, Math.min(2, D - 1));
+      let nr, ng, nb;
+      if (t >= 0) {
+        nr = r * (1 - t * 0.18);
+        ng = g * (1 - t * 0.05);
+        nb = b * (1 + t * 0.22);
+      } else {
+        nr = r * (1 + (-t) * 0.25);
+        ng = g * (1 + t * 0.05);
+        nb = b * (1 + t * 0.35);
+      }
+      return ((Math.max(0, Math.min(255, nr | 0)) << 16) |
+              (Math.max(0, Math.min(255, ng | 0)) << 8)  |
+              (Math.max(0, Math.min(255, nb | 0))));
     }
 
     function drawStar(px, py, color, alpha, size) {
@@ -882,12 +892,13 @@
       const ux = ry * fz - rz * fy;
       const uy = rz * fx - rx * fz;
       const uz = rx * fy - ry * fx;
-      // Accumulate this frame's intended camera delta from drift + manual movement,
-      // then apply at once. Total |Δ|/dt becomes the velocity used for relativistic β.
-      let dvx = 0, dvy = 0, dvz = 0;
+      // Compute the TARGET velocity for this frame (drift + manual). The actual
+      // velocity is smoothed toward this target so acceleration ramps over ~0.25s
+      // instead of stepping discontinuously when keys are pressed/released.
+      let tvx = 0, tvy = 0, tvz = 0;
       if (drifting) {
-        const ds = DRIFT_V * dt * TIME_MUL;
-        dvx += fx * ds; dvy += fy * ds; dvz += fz * ds;
+        const ds = DRIFT_V * TIME_MUL;
+        tvx += fx * ds; tvy += fy * ds; tvz += fz * ds;
       }
       // Manual WASD/QE — auto-scales by proximity to nearest object.
       // Far from anything: full speed. Approach an object → smooth slowdown so
@@ -906,23 +917,32 @@
         const proxFactor = lastNearestD === Infinity
           ? 1
           : Math.min(1, Math.max(0.005, lastNearestD / 1e13));
-        const base = 1e10;
-        const sizeFloor = lastNearestR * 0.8;
+        const base = 1e8; // ~0.33c default — sub-light so a tap of W doesn't pin β to 0.999
+        // sizeFloor only applies when close to an object, and is hard-capped so
+        // huge-radius objects (nebulae) don't make WASD warp instantly.
+        const sizeFloor = (lastNearestD < lastNearestR * 12)
+          ? Math.min(5e9, lastNearestR * 0.5)
+          : 0;
         let speed = Math.max(base * proxFactor, sizeFloor);
         speed *= shiftMul;
-        const mv = speed * dt;
-        // Movement in camera-local axes — accumulate into dv, applied below
-        if (keys.has('w')) { dvx += fx * mv; dvy += fy * mv; dvz += fz * mv; }
-        if (keys.has('s')) { dvx -= fx * mv; dvy -= fy * mv; dvz -= fz * mv; }
-        if (keys.has('d')) { dvx += rx * mv; dvy += ry * mv; dvz += rz * mv; }
-        if (keys.has('a')) { dvx -= rx * mv; dvy -= ry * mv; dvz -= rz * mv; }
-        if (keys.has('q') || keys.has(' ')) { dvx += ux * mv; dvy += uy * mv; dvz += uz * mv; }
-        if (keys.has('e')) { dvx -= ux * mv; dvy -= uy * mv; dvz -= uz * mv; }
+        // Add manual velocity components (m/s, camera-local axes)
+        if (keys.has('w')) { tvx += fx * speed; tvy += fy * speed; tvz += fz * speed; }
+        if (keys.has('s')) { tvx -= fx * speed; tvy -= fy * speed; tvz -= fz * speed; }
+        if (keys.has('d')) { tvx += rx * speed; tvy += ry * speed; tvz += rz * speed; }
+        if (keys.has('a')) { tvx -= rx * speed; tvy -= ry * speed; tvz -= rz * speed; }
+        if (keys.has('q') || keys.has(' ')) { tvx += ux * speed; tvy += uy * speed; tvz += uz * speed; }
+        if (keys.has('e')) { tvx -= ux * speed; tvy -= uy * speed; tvz -= uz * speed; }
       }
-      // Apply combined movement and compute instantaneous velocity / β
-      cam[0] += dvx; cam[1] += dvy; cam[2] += dvz;
-      const dvMag = Math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz);
-      const camV = dt > 0 ? dvMag / dt : 0;
+      // Smooth current velocity toward target (inertia / damping). Time constant ≈ 0.3 s.
+      const lerpV = Math.min(1, dt * 3.5);
+      velocity[0] += (tvx - velocity[0]) * lerpV;
+      velocity[1] += (tvy - velocity[1]) * lerpV;
+      velocity[2] += (tvz - velocity[2]) * lerpV;
+      // Apply smoothed velocity to camera position
+      cam[0] += velocity[0] * dt;
+      cam[1] += velocity[1] * dt;
+      cam[2] += velocity[2] * dt;
+      const camV = Math.sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
       lastCamV = camV;
       if (nowMs - lastSavedMs > 500) {
         savePosition();
@@ -942,9 +962,11 @@
       const ccx = Math.floor(cam[0] / CHUNK_SIZE);
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
       const ccz = Math.floor(cam[2] / CHUNK_SIZE);
-      // Relativistic β from actual instantaneous camera velocity (drift + WASD).
-      // Saturates at 0.999 — Shift warp ramps up to this asymptotically.
-      const beta = Math.min(0.999, camV / C);
+      // Relativistic β smoothed across frames so it ramps gradually instead of
+      // snapping when Shift+W is tapped. Saturates at 0.999 (Shift warp ceiling).
+      const targetBeta = Math.min(0.999, camV / C);
+      smoothBeta += (targetBeta - smoothBeta) * Math.min(1, dt * 2.5);
+      const beta = smoothBeta;
 
       // Iterate the full cube around the camera (we can now look in any direction)
       const minDz = -N_RADIUS;
