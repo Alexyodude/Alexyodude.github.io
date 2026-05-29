@@ -912,8 +912,8 @@
         // either Shift or all movement keys.
         if (isShift && isMoving) shiftHold += dt;
         else shiftHold = 0;
-        // Cap at 1e12 (10,000× previous). Max WASD ≈ 1e20 m/s — galactic blur. Reaches cap at ~6s hold.
-        const shiftMul = isShift ? Math.min(1e12, Math.exp(shiftHold * 4.6)) : 1;
+        // Cap at 1e10 → max WASD ≈ 1e18 m/s (~100 ly/s). Reaches cap at ~5s hold.
+        const shiftMul = isShift ? Math.min(1e10, Math.exp(shiftHold * 4.6)) : 1;
 
         const proxFactor = lastNearestD === Infinity
           ? 1
