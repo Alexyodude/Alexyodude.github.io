@@ -41,6 +41,7 @@
     let lastCamV = 0; // last frame's instantaneous speed (m/s), used by UI
     let smoothBeta = 0; // β smoothed across frames — gives a gradual ramp on Shift warp
     const velocity = [0, 0, 0]; // current world-space velocity (m/s); smoothed toward target for inertia
+    let autoW = true; // virtual W held by default until the user presses W themselves
     let lastFrameMs = performance.now();
     let lastSavedMs = 0;
     let lastNearestD = Infinity; // distance to closest object, tracked each frame for auto-slowdown
@@ -356,6 +357,7 @@
     window.addEventListener('keydown', (e) => {
       if (isTypingTarget(e.target)) return;
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      if (k === 'w') autoW = false; // user takes over the virtual auto-press
       keys.add(k);
       if (k === ' ' || (['w','a','s','d','q','e'].includes(k))) e.preventDefault();
     }, { passive: false });
@@ -952,10 +954,11 @@
       // Manual WASD/QE — auto-scales by proximity to nearest object.
       // Far from anything: full speed. Approach an object → smooth slowdown so
       // navigation stays precise. Shift for warp cruise (also scaled but capped).
-      if (keys.size) {
-        const isMoving = keys.has('w') || keys.has('a') || keys.has('s') || keys.has('d') ||
+      const wHeld = keys.has('w') || autoW;
+      if (keys.size || autoW) {
+        const isMoving = wHeld || keys.has('a') || keys.has('s') || keys.has('d') ||
                          keys.has('q') || keys.has('e') || keys.has(' ');
-        // Always ramp: holding any movement key exponentially boosts speed.
+        // Always ramp: holding any movement key (or auto-W) exponentially boosts speed.
         // Reaches ~1e10× over ~5s, capping at ~1e18 m/s (~100 ly/s).
         if (isMoving) shiftHold += dt;
         else shiftHold = 0;
@@ -973,7 +976,7 @@
         let speed = Math.max(base * proxFactor, sizeFloor);
         speed *= shiftMul;
         // Add manual velocity components (m/s, camera-local axes)
-        if (keys.has('w')) { tvx += fx * speed; tvy += fy * speed; tvz += fz * speed; }
+        if (wHeld) { tvx += fx * speed; tvy += fy * speed; tvz += fz * speed; }
         if (keys.has('s')) { tvx -= fx * speed; tvy -= fy * speed; tvz -= fz * speed; }
         if (keys.has('d')) { tvx += rx * speed; tvy += ry * speed; tvz += rz * speed; }
         if (keys.has('a')) { tvx -= rx * speed; tvy -= ry * speed; tvz -= rz * speed; }
@@ -1295,43 +1298,84 @@
           ctx.arc(bh.proj.px, bh.proj.py, rEH * 1.5, 0, Math.PI * 2);
           ctx.stroke();
         } else {
-          // LOD: tilted accretion disc with dynamic rotation (bright sector orbits)
+          // Realistic accretion disc — Doppler-asymmetric, inner-hot to outer-cool,
+          // rotating hot spot, photon ring, polar jets.
           const r = mulberry32(objHash(bh.obj));
-          const tilt = (r() - 0.5) * 0.6 + 0.35;
-          const rotSpeed = 0.35 + r() * 0.4; // radians/sec
+          const tilt = (r() - 0.5) * 0.7 + 0.4;
+          const rotSpeed = 0.4 + r() * 0.45;
           const orbitPhase = tAnim * rotSpeed;
           ctx.save();
           ctx.translate(bh.proj.px, bh.proj.py);
           ctx.rotate(tilt);
-          const bands = 7;
+
+          // --- polar jets (behind the disc) ---
+          const jetLen = rEH * 12;
+          const jetW = rEH * 0.65;
+          function jetCone(dy) {
+            const g = ctx.createLinearGradient(0, 0, 0, dy);
+            g.addColorStop(0,   'rgba(200,225,255,0.55)');
+            g.addColorStop(0.25,'rgba(150,190,255,0.30)');
+            g.addColorStop(0.6, 'rgba(120,165,255,0.10)');
+            g.addColorStop(1,   'rgba(120,165,255,0)');
+            ctx.fillStyle = g;
+            ctx.beginPath();
+            ctx.moveTo(-rEH * 0.18, 0);
+            ctx.lineTo(-jetW, dy);
+            ctx.lineTo(jetW, dy);
+            ctx.lineTo(rEH * 0.18, 0);
+            ctx.closePath();
+            ctx.fill();
+          }
+          jetCone(-jetLen);
+          jetCone(jetLen);
+
+          // --- accretion disc bands ---
+          // Color profile: inner = hot (white-yellow), outer = cool (orange-red).
+          // Doppler asymmetry: approaching half (canvas arc 0..π = "lower" in local frame)
+          // is brighter & shifted hotter; receding half is dim & redder.
+          const bands = 14;
           for (let b = 0; b < bands; b++) {
             const t = b / (bands - 1);
             const rBand = rEH * (1.4 + t * 2.4);
-            const minor = rBand * 0.22;
-            const hueBase = 22 + t * 18;
-            const baseAlpha = (0.85 - t * 0.55);
-            // Static base band (full ellipse, dim)
-            ctx.strokeStyle = `hsla(${hueBase}, 80%, 50%, ${(baseAlpha * 0.55).toFixed(2)})`;
-            ctx.lineWidth = Math.max(0.8, rEH * 0.16);
+            const minor = rBand * 0.18;
+            const lw = Math.max(0.8, rEH * 0.14);
+            // Blackbody-ish color: inner white-yellow → outer red
+            const innerR = 255, innerG = 240 - t * 110, innerB = 180 - t * 140;
+            const baseA = 0.75 - t * 0.45;
+            // Approaching half (bright + blue-shifted)
+            ctx.strokeStyle = `rgba(${Math.min(255, innerR + 0)|0},${Math.min(255, innerG + 30)|0},${Math.min(255, innerB + 60)|0},${(baseA * 1.0).toFixed(2)})`;
+            ctx.lineWidth = lw * 1.1;
             ctx.beginPath();
-            ctx.ellipse(0, 0, rBand, minor, 0, 0, Math.PI * 2);
+            ctx.ellipse(0, 0, rBand, minor, 0, 0, Math.PI);
             ctx.stroke();
-            // Bright orbiting sector — rotates over time, each band at a slightly
-            // different angular velocity to suggest Keplerian shear
-            const sectorPhase = orbitPhase * (1 + b * 0.18);
-            const arcSpan = 1.4;
-            ctx.strokeStyle = `hsla(${hueBase + 25}, 95%, 70%, ${baseAlpha.toFixed(2)})`;
-            ctx.lineWidth = Math.max(1, rEH * 0.2);
+            // Receding half (dim + red-shifted)
+            ctx.strokeStyle = `rgba(${innerR|0},${(innerG * 0.6)|0},${(innerB * 0.4)|0},${(baseA * 0.35).toFixed(2)})`;
+            ctx.lineWidth = lw * 0.9;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, rBand, minor, 0, Math.PI, Math.PI * 2);
+            ctx.stroke();
+            // Rotating bright sector (Keplerian shear — inner faster)
+            const sectorPhase = orbitPhase * (1 + b * 0.2);
+            const arcSpan = 0.9;
+            ctx.strokeStyle = `rgba(255,250,210,${(baseA * 0.9).toFixed(2)})`;
+            ctx.lineWidth = lw * 1.3;
             ctx.beginPath();
             ctx.ellipse(0, 0, rBand, minor, 0, sectorPhase - arcSpan / 2, sectorPhase + arcSpan / 2);
             ctx.stroke();
           }
           ctx.restore();
-          // LOD: photon ring — thin bright sphere just outside horizon
-          ctx.strokeStyle = 'rgba(255,250,200,0.9)';
-          ctx.lineWidth = Math.max(0.6, rEH * 0.06);
+
+          // --- photon ring (sharp bright circle at 1.5× event horizon) ---
+          ctx.strokeStyle = 'rgba(255,250,205,0.95)';
+          ctx.lineWidth = Math.max(0.8, rEH * 0.07);
           ctx.beginPath();
-          ctx.arc(bh.proj.px, bh.proj.py, rEH * 1.18, 0, Math.PI * 2);
+          ctx.arc(bh.proj.px, bh.proj.py, rEH * 1.5, 0, Math.PI * 2);
+          ctx.stroke();
+          // Inner faint photon ring (n=2)
+          ctx.strokeStyle = 'rgba(255,230,170,0.45)';
+          ctx.lineWidth = Math.max(0.4, rEH * 0.03);
+          ctx.beginPath();
+          ctx.arc(bh.proj.px, bh.proj.py, rEH * 1.22, 0, Math.PI * 2);
           ctx.stroke();
         }
         // Event horizon — pitch black
