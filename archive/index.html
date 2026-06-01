@@ -1322,6 +1322,9 @@
               autopilotLingerStart = tAnimSec;
               prepareNextTarget();
               velocity[0] = 0; velocity[1] = 0; velocity[2] = 0;
+              // Snap camera to face the body for the linger view (only place
+              // the camera rotates — travel itself is pure translation).
+              snapAimToCurrentTarget();
             }
             if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > autoCfg.linger) {
               if (nextAutopilotTarget) {
@@ -1403,30 +1406,14 @@
 
             if (autopilotPhase === 'traveling') {
               const baseSpeed = decelSpeed(dist, designSpeed, closeThreshold);
-              // Rotate only while meaningfully misaligned AND still outside the
-              // lock zone. Once we're within aimLockEpsilon radians of the aim
-              // point, lock direction and coast — geometry preserves the aim
-              // because we're moving straight at a fixed world position.
-              const aimYaw0 = Math.atan2(dx, dz);
-              const aimPitch0 = -Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
-              let dYaw0 = aimYaw0 - yaw;
-              while (dYaw0 > Math.PI) dYaw0 -= 2 * Math.PI;
-              while (dYaw0 < -Math.PI) dYaw0 += 2 * Math.PI;
-              const dPitch0 = aimPitch0 - pitch;
-              const angErr0 = Math.sqrt(dYaw0 * dYaw0 + dPitch0 * dPitch0);
-              const inLockZone = centreDist < closeThreshold * autoCfg.lockAimAt;
-              const aimed = angErr0 < autoCfg.aimLockEpsilon;
-              // HARD time cap on rotation — even if not aimed yet, stop turning
-              // after autoCfg.maxRotateSec into the travel phase. After this
-              // the camera coasts in whatever direction it's currently facing.
-              const rotationTimedOut = (tAnimSec - autopilotTravelStart) > autoCfg.maxRotateSec;
-              if (aimed || inLockZone || rotationTimedOut) {
-                tvx = fx * baseSpeed;
-                tvy = fy * baseSpeed;
-                tvz = fz * baseSpeed;
-              } else {
-                [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, autoCfg.travelAimRate);
-              }
+              // VECTOR-BASED translation, point A → point B. Velocity points
+              // straight at the target; camera orientation stays untouched
+              // during travel — no spin from auto-rotation. The camera only
+              // snaps to face the target at linger entry (below).
+              const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+              tvx = (dx / dn) * baseSpeed;
+              tvy = (dy / dn) * baseSpeed;
+              tvz = (dz / dn) * baseSpeed;
             } else {
               // Linger: hold position dead-still. Zero target velocity, no
               // rotation. Body sits perfectly centred in view for the full
