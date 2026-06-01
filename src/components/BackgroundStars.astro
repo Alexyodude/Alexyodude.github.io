@@ -1239,16 +1239,20 @@
               const nfx = nSy * nCp, nfy = -nSp, nfz = nCy * nCp;
               return [nfx * baseSpeed, nfy * baseSpeed, nfz * baseSpeed];
             }
-            // Smooth decel ramp: distance-scaled warp far away, easing toward
-            // designSpeed inside 2.5× the approach corridor. No abrupt drop.
+            // Smooth decel ramp: distance-scaled warp far away, easing aggressively
+            // toward designSpeed inside the approach corridor. Cubic ease so the
+            // *last* approach (final radius or two) is genuinely slow — you have
+            // time to take in the body before drifting past.
             function decelSpeed(d, designSp, threshold) {
               const warp = Math.min(1e18, d * 1.5);
-              if (d > threshold * 2.5) return warp;
-              const t = Math.max(0, Math.min(1, (d - threshold) / (threshold * 1.5)));
-              const ease = t * t * (3 - 2 * t);
+              if (d > threshold * 4) return warp;
+              const t = Math.max(0, Math.min(1, (d - threshold) / (threshold * 3)));
+              const ease = t * t * t; // cubic — slows hard near the body
               return designSp + (warp - designSp) * ease;
             }
-            const designSpeed = closeThreshold / (AUTOPILOT_LINGER * 2);
+            // Drift speed at the body — quarter the approach distance over the
+            // linger window, so the body stays large in frame for the full time.
+            const designSpeed = closeThreshold / (AUTOPILOT_LINGER * 4);
 
             if (autopilotPhase === 'traveling') {
               const baseSpeed = decelSpeed(dist, designSpeed, closeThreshold);
@@ -1267,7 +1271,7 @@
               const nextRadius = nextAutopilotTarget.physRadius || 1e9;
               const nextApproachMul = AUTOPILOT_APPROACH[nextAutopilotTarget.type] || 18;
               const nextThreshold = nextRadius * nextApproachMul;
-              const nextDesignSp = nextThreshold / (AUTOPILOT_LINGER * 2);
+              const nextDesignSp = nextThreshold / (AUTOPILOT_LINGER * 4);
               const nextWarp = decelSpeed(nd, nextDesignSp, nextThreshold);
               // Speed ramps from current designSpeed (drift) → next warp (closing in).
               const baseSpeed = designSpeed + (nextWarp - designSpeed) * blend;
