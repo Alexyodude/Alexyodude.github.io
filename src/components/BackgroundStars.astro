@@ -1412,10 +1412,16 @@
       ctx.restore();
     }
 
+    let tAnimAccum = 0; // accumulated animation time excluding linger pauses
     function frame(nowMs) {
       const dt = Math.min(0.1, (nowMs - lastFrameMs) / 1000);
       lastFrameMs = nowMs;
-      const tAnim = nowMs / 1000; // wall-clock seconds, drives dynamic effects (BH rotation, etc.)
+      // Freeze body animation time during autopilot linger so the body's
+      // surface features (star flares, BH disk, halo pulse) stop animating
+      // while we hold position — otherwise it looks like the body is rotating.
+      const isLingerFrozen = autopilot && autopilotPhase === 'lingering';
+      if (!isLingerFrozen) tAnimAccum += dt;
+      const tAnim = tAnimAccum;
 
       // Camera basis vectors from yaw/pitch (right-handed; +Y is screen-down, +Z is forward).
       // Let-bindings (not const) so autopilot snap can update them mid-frame
