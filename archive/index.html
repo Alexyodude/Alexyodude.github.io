@@ -1088,25 +1088,36 @@
             }
           }
           if (autopilotTarget && dist > 1) {
-            if (autopilotPhase === 'traveling') {
-              // Distance-scaled cruise speed, capped at warp ceiling.
-              const targetSpeed = Math.min(1e18, dist * 1.5);
-              const aimYaw = Math.atan2(dx, dz);
-              const aimPitch = -Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
+            // Couple warp speed to aim alignment so rotation and warp ramp as a
+            // single maneuver — camera doesn't fly past while still turning.
+            // alignment: 1 when aimed, ~0 when 90°+ off. Speed scales with this.
+            function aimAndWarp(toX, toY, toZ, toDist, baseSpeed, aimRate) {
+              const aimYaw = Math.atan2(toX, toZ);
+              const aimPitch = -Math.atan2(toY, Math.sqrt(toX * toX + toZ * toZ));
               let dYaw = aimYaw - yaw;
               while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
               while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
-              const aimLerp = Math.min(1, dt * 2.5);
+              const dPitch = aimPitch - pitch;
+              const angErr = Math.sqrt(dYaw * dYaw + dPitch * dPitch);
+              // exp(-3·err): aligned (err≈0) → 1, ~90° off (err≈π/2) → ~0.1
+              const alignment = Math.max(0.05, Math.exp(-angErr * 3));
+              // Aim rate also scales with how far off — turn faster when more wrong,
+              // so rotation catches up before warp commits to a direction.
+              const turnBoost = 1 + Math.min(2.5, angErr * 1.5);
+              const aimLerp = Math.min(1, dt * aimRate * turnBoost);
               yaw   += dYaw * aimLerp;
-              pitch += (aimPitch - pitch) * aimLerp;
-              const nx = dx / dist, ny = dy / dist, nz = dz / dist;
-              tvx = nx * targetSpeed;
-              tvy = ny * targetSpeed;
-              tvz = nz * targetSpeed;
+              pitch += dPitch * aimLerp;
+              const speed = baseSpeed * alignment;
+              const nx = toX / toDist, ny = toY / toDist, nz = toZ / toDist;
+              return [nx * speed, ny * speed, nz * speed];
+            }
+            if (autopilotPhase === 'traveling') {
+              const baseSpeed = Math.min(1e18, dist * 1.5);
+              [tvx, tvy, tvz] = aimAndWarp(dx, dy, dz, dist, baseSpeed, 2.5);
             } else {
               // Lingering: blend aim + velocity from "coast past current" toward
-              // "head to next target". By the time linger ends, we're already
-              // pointed and accelerating in the new direction — no snap.
+              // "head to next target". Rotation curves and warp accelerates
+              // together via the alignment coupling.
               const lingerT = Math.min(1, (tAnimSec - autopilotLingerStart) / AUTOPILOT_LINGER);
               const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
               const coastSpeed = Math.max(targetRadius * 4, Math.min(vMag, targetRadius * 8));
@@ -1115,27 +1126,17 @@
                 const ndy = (nextAutopilotTarget.wy + nextAutopilotOffset[1]) - cam[1];
                 const ndz = (nextAutopilotTarget.wz + nextAutopilotOffset[2]) - cam[2];
                 const nd  = Math.sqrt(ndx * ndx + ndy * ndy + ndz * ndz) || 1;
-                // Ease-in-out the blend so it's gentle at the start and end.
                 const blend = lingerT * lingerT * (3 - 2 * lingerT);
-                // Aim: smoothly turn from current heading toward next target.
-                const aimYaw = Math.atan2(ndx, ndz);
-                const aimPitch = -Math.atan2(ndy, Math.sqrt(ndx * ndx + ndz * ndz));
-                let dYaw = aimYaw - yaw;
-                while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
-                while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
-                const aimLerp = Math.min(1, dt * (1.2 + blend * 2.0));
-                yaw   += dYaw * aimLerp;
-                pitch += (aimPitch - pitch) * aimLerp;
-                // Velocity: blend coast-forward into next-target-direction.
-                const nextSpeed = Math.min(1e18, nd * 1.5);
+                // Aim toward next target (alignment-gated speed via aimAndWarp).
+                const nextBaseSpeed = Math.min(1e18, nd * 1.5);
+                const aimRate = 1.2 + blend * 2.0;
+                const [nvx, nvy, nvz] = aimAndWarp(ndx, ndy, ndz, nd, nextBaseSpeed, aimRate);
+                // Velocity: blend coast-forward into alignment-gated next-target.
                 const cvx = fx * coastSpeed, cvy = fy * coastSpeed, cvz = fz * coastSpeed;
-                const nnx = ndx / nd, nny = ndy / nd, nnz = ndz / nd;
-                const nvx = nnx * nextSpeed, nvy = nny * nextSpeed, nvz = nnz * nextSpeed;
                 tvx = cvx * (1 - blend) + nvx * blend;
                 tvy = cvy * (1 - blend) + nvy * blend;
                 tvz = cvz * (1 - blend) + nvz * blend;
               } else {
-                // No next target queued — coast forward (original behaviour).
                 tvx = fx * coastSpeed;
                 tvy = fy * coastSpeed;
                 tvz = fz * coastSpeed;
