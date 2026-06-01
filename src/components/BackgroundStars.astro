@@ -144,8 +144,8 @@
 
     // ===== world constants =====
     const STORAGE_KEY = 'universe.cam.v2';
-    const RENDER_DISTANCE = 5e18;   // meters — about 530 light-years
-    const CHUNK_SIZE      = 5e17;   // meters — about 53 light-years per chunk
+    const RENDER_DISTANCE = 2e19;   // meters — about 2100 light-years
+    const CHUNK_SIZE      = 2e18;   // meters — about 210 light-years per chunk
     const N_RADIUS        = Math.ceil(RENDER_DISTANCE / CHUNK_SIZE); // chunks in each axis
     // Drift cruise velocity = c × TIME_MUL (capped at β=0.999 for relativistic
     // effects). Animations (planet rotation, star flares, BH disc spin) run on
@@ -170,6 +170,7 @@
     let autopilotTarget = null;
     let autopilotPhase = 'searching'; // 'traveling' | 'lingering' | 'searching'
     let autopilotLingerStart = 0;
+    const autopilotOffset = [0, 0, 0]; // perpendicular fly-by offset (so we pass on the side)
     const autopilotVisited = []; // ring buffer of recent target keys to avoid loops
     const AUTOPILOT_LINGER = 5; // seconds spent near each POI after closing in
     const AUTOPILOT_TYPES = ['planet', 'star', 'blackhole'];
@@ -1146,27 +1147,49 @@
       const tAnimSec = nowMs / 1000;
       let autopilotActive = false;
       if (autopilot) {
-        if (!autopilotTarget) {
+        function acquireNewTarget() {
           autopilotTarget = findNextAutopilotPOI();
           autopilotPhase = 'traveling';
+          if (!autopilotTarget) return;
+          // Pick a deterministic perpendicular offset so we fly past the object
+          // on the side rather than smashing through its centre.
+          const rdir = mulberry32(objHash(autopilotTarget) ^ 0xF1B7);
+          const dx0 = autopilotTarget.wx - cam[0];
+          const dy0 = autopilotTarget.wy - cam[1];
+          const dz0 = autopilotTarget.wz - cam[2];
+          const dn = Math.sqrt(dx0 * dx0 + dy0 * dy0 + dz0 * dz0) || 1;
+          const tnx = dx0 / dn, tny = dy0 / dn, tnz = dz0 / dn;
+          let ox = rdir() - 0.5, oy = rdir() - 0.5, oz = rdir() - 0.5;
+          // Project to perpendicular: remove the component along the travel direction
+          const dot = ox * tnx + oy * tny + oz * tnz;
+          ox -= dot * tnx; oy -= dot * tny; oz -= dot * tnz;
+          const om = Math.sqrt(ox * ox + oy * oy + oz * oz) || 1;
+          const flyByDist = (autopilotTarget.physRadius || 1e9) * (5 + rdir() * 6);
+          autopilotOffset[0] = (ox / om) * flyByDist;
+          autopilotOffset[1] = (oy / om) * flyByDist;
+          autopilotOffset[2] = (oz / om) * flyByDist;
         }
+        if (!autopilotTarget) acquireNewTarget();
         if (autopilotTarget) {
           autopilotActive = true;
-          const dx = autopilotTarget.wx - cam[0];
-          const dy = autopilotTarget.wy - cam[1];
-          const dz = autopilotTarget.wz - cam[2];
+          // Aim at the offset-target so we approach the side, not the centre.
+          const dx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
+          const dy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
+          const dz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
           const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          // Distance to the object centre — used for phase transitions
+          const cdx = autopilotTarget.wx - cam[0];
+          const cdy = autopilotTarget.wy - cam[1];
+          const cdz = autopilotTarget.wz - cam[2];
+          const centreDist = Math.sqrt(cdx * cdx + cdy * cdy + cdz * cdz);
           const targetRadius = autopilotTarget.physRadius || 1e9;
           const closeThreshold = targetRadius * 30;
-          // Transition: travel → linger when we're close enough to actually see it
-          if (autopilotPhase === 'traveling' && dist < closeThreshold) {
+          if (autopilotPhase === 'traveling' && centreDist < closeThreshold) {
             autopilotPhase = 'lingering';
             autopilotLingerStart = tAnimSec;
           }
-          // Transition: linger → next POI after AUTOPILOT_LINGER seconds
           if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > AUTOPILOT_LINGER) {
-            autopilotTarget = findNextAutopilotPOI();
-            autopilotPhase = 'traveling';
+            acquireNewTarget();
           }
           if (autopilotTarget && dist > 1) {
             // Speed scales with distance so we don't overshoot in a single frame.
@@ -1283,7 +1306,6 @@
       const maxDz = N_RADIUS;
       const renderD2 = RENDER_DISTANCE * RENDER_DISTANCE;
 
-      // Two-pass: nebulae & black holes drawn separately to handle compositing
       const nebulaeDraw = [];
       const blackHolesDraw = [];
       let nearestThisFrame = Infinity;
@@ -1402,8 +1424,8 @@
                   ctx.beginPath(); ctx.arc(proj.px, proj.py, angRad * 3, 0, Math.PI * 2); ctx.fill();
                 } else {
                   // Distant point source — brightness-driven pixel size + Doppler+beaming
-                  const size = Math.max(0.5, depth * 3.2 * obj.sizeMul);
-                  let a = obj.bri * (0.15 + depth * 0.8);
+                  const size = Math.max(0.6, depth * 3.4 * obj.sizeMul);
+                  let a = obj.bri * (0.25 + depth * 0.75);
                   let cr = obj.cr, cg = obj.cg, cb = obj.cb;
                   if (beta > 0.01) {
                     const gamma = 1 / Math.sqrt(1 - beta * beta);
@@ -1428,8 +1450,10 @@
                 // True angular size: rad_px = physRadius * focal / dz.
                 const rad = obj.physRadius / 1e15 * proj.k;
                 if (rad < 0.6) {
-                  // Too far to resolve — render as faint dot
-                  drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, 0.5 * depth, Math.max(0.6, rad * 4));
+                  // Too far to resolve — still render as a faint speck so the
+                  // POI grows visibly as we approach it (no popping in).
+                  const dotA = Math.max(0.25, 0.6 * depth);
+                  drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, dotA, Math.max(0.7, rad * 4));
                 } else if (rad < 6) {
                   // Medium distance: simple shaded disc (cheap, no texture)
                   const visAlpha = Math.min(1, 0.4 + depth);
