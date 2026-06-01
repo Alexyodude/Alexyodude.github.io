@@ -1217,14 +1217,16 @@
       const tAnim = nowMs / 1000; // wall-clock seconds, drives dynamic effects (BH rotation, etc.)
 
       // Camera basis vectors from yaw/pitch (right-handed; +Y is screen-down, +Z is forward).
-      const cy = Math.cos(yaw),   sy = Math.sin(yaw);
-      const cp = Math.cos(pitch), sp = Math.sin(pitch);
-      const fx = sy * cp, fy = -sp,  fz = cy * cp;          // forward
-      const rx = cy,      ry = 0,    rz = -sy;              // right (horizontal)
+      // Let-bindings (not const) so autopilot snap can update them mid-frame
+      // when yaw/pitch are reset at a target handoff.
+      let cy = Math.cos(yaw),   sy = Math.sin(yaw);
+      let cp = Math.cos(pitch), sp = Math.sin(pitch);
+      let fx = sy * cp, fy = -sp,  fz = cy * cp;          // forward
+      let rx = cy,      ry = 0,    rz = -sy;              // right (horizontal)
       // up = right × forward
-      const ux = ry * fz - rz * fy;
-      const uy = rz * fx - rx * fz;
-      const uz = rx * fy - ry * fx;
+      let ux = ry * fz - rz * fy;
+      let uy = rz * fx - rx * fz;
+      let uz = rx * fy - ry * fx;
       // Compute the TARGET velocity for this frame (autopilot OR drift+manual).
       // The actual velocity is smoothed toward this target so acceleration ramps
       // over ~0.3s instead of stepping discontinuously.
@@ -1248,16 +1250,22 @@
           const sdz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
           yaw = Math.atan2(sdx, sdz);
           pitch = -Math.atan2(sdy, Math.sqrt(sdx * sdx + sdz * sdz));
-          // Snap velocity to align with the new heading too — otherwise the
+          // Recompute basis vectors so this frame's tvx = fx * baseSpeed uses
+          // the NEW forward direction, not the stale pre-snap forward.
+          cy = Math.cos(yaw);   sy = Math.sin(yaw);
+          cp = Math.cos(pitch); sp = Math.sin(pitch);
+          fx = sy * cp; fy = -sp; fz = cy * cp;
+          rx = cy; ry = 0; rz = -sy;
+          ux = ry * fz - rz * fy;
+          uy = rz * fx - rx * fz;
+          uz = rx * fy - ry * fx;
+          // Snap velocity to align with the new forward too — otherwise the
           // velocity vector lerps from the old direction over ~0.25s and the
           // camera slides sideways while facing forward (reads as rotation).
           const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
-          if (vMag > 0) {
-            const sn = Math.sqrt(sdx * sdx + sdy * sdy + sdz * sdz) || 1;
-            velocity[0] = (sdx / sn) * vMag;
-            velocity[1] = (sdy / sn) * vMag;
-            velocity[2] = (sdz / sn) * vMag;
-          }
+          velocity[0] = fx * vMag;
+          velocity[1] = fy * vMag;
+          velocity[2] = fz * vMag;
         }
         function acquireNewTarget() {
           autopilotTarget = findNextAutopilotPOI();
