@@ -275,6 +275,7 @@
       maxRotateSec: 30,            // very loose cap (effectively off) — let rotation complete
       maxAngleChange: 1.2,         // ~69° — picker accepts most candidates so it always finds one
       aimAngularVel: 1.5,          // rad/sec angular velocity of the smooth aim (constant rate, not exponential)
+      steerRate: 2.0,              // velocity-vector steering rate — fraction of baseSpeed added toward target per second before renormalisation
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -1608,15 +1609,33 @@
             const designSpeed = closeThreshold / (autoCfg.linger * autoCfg.designSpeedDivisor);
 
             if (autopilotPhase === 'traveling') {
-              const baseSpeed = decelSpeed(dist, designSpeed, closeThreshold);
-              // VECTOR-BASED translation, point A → point B. Velocity points
-              // straight at the target; camera orientation stays untouched
-              // during travel — no spin from auto-rotation. The camera only
-              // snaps to face the target at linger entry (below).
+              // Vector-addition steering: each frame we ADD a target-direction
+              // increment to the current velocity vector, then renormalize the
+              // magnitude back to the per-distance speed (capped at maxWarp).
+              // Velocity direction smoothly converges to the target direction
+              // over many additions; magnitude is always at the cap. No camera
+              // rotation — pure translation through space.
+              const baseSpeed = Math.min(decelSpeed(dist, designSpeed, closeThreshold), Math.pow(10, autoCfg.maxWarpExp));
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-              tvx = (dx / dn) * baseSpeed;
-              tvy = (dy / dn) * baseSpeed;
-              tvz = (dz / dn) * baseSpeed;
+              const tdx = dx / dn, tdy = dy / dn, tdz = dz / dn;
+              // Vector addition: nudge velocity toward target direction.
+              const addMag = baseSpeed * autoCfg.steerRate * dt;
+              const newVx = velocity[0] + tdx * addMag;
+              const newVy = velocity[1] + tdy * addMag;
+              const newVz = velocity[2] + tdz * addMag;
+              const newMag = Math.sqrt(newVx * newVx + newVy * newVy + newVz * newVz);
+              if (newMag > 1e-9) {
+                const scale = baseSpeed / newMag;
+                velocity[0] = newVx * scale;
+                velocity[1] = newVy * scale;
+                velocity[2] = newVz * scale;
+              } else {
+                velocity[0] = tdx * baseSpeed;
+                velocity[1] = tdy * baseSpeed;
+                velocity[2] = tdz * baseSpeed;
+              }
+              // Set tvx = velocity so the post-loop lerp leaves us untouched.
+              tvx = velocity[0]; tvy = velocity[1]; tvz = velocity[2];
             } else {
               // Linger: hold position dead-still. Zero target velocity, no
               // rotation. Body sits perfectly centred in view for the full
@@ -1777,10 +1796,10 @@
 
         if (_item.type === 'star') {
           const angRad = obj.physRadius / 1e15 * proj.k;
-          if (angRad > 0.3) {
+          if (angRad > 0.003) {
             const tex = getStarTexture(obj);
             ctx.drawImage(tex, proj.px - angRad, proj.py - angRad, angRad * 2, angRad * 2);
-            if (angRad > 1) {
+            if (angRad > 0.01) {
               const rng = mulberry32(objHash(obj) ^ 0xF1A4E5);
               const rotPeriod = 8 + rng() * 18;
               const rotPhase = tAnim * (2 * Math.PI / rotPeriod);
@@ -1831,7 +1850,7 @@
             halo.addColorStop(1, `rgba(${obj.cr},${obj.cg},${obj.cb},0)`);
             ctx.fillStyle = halo;
             ctx.beginPath(); ctx.arc(proj.px, proj.py, angRad * 3.5 * haloPulse, 0, Math.PI * 2); ctx.fill();
-          } else if (angRad > 0.1) {
+          } else if (angRad > 0.001) {
             const disc = ctx.createRadialGradient(proj.px, proj.py, 0, proj.px, proj.py, angRad);
             disc.addColorStop(0,   `rgba(${Math.min(255, obj.cr + 60)},${Math.min(255, obj.cg + 60)},${Math.min(255, obj.cb + 60)},1)`);
             disc.addColorStop(0.85, `rgba(${obj.cr},${obj.cg},${obj.cb},0.95)`);
@@ -1868,10 +1887,10 @@
 
         } else if (_item.type === 'planet') {
           const rad = obj.physRadius / 1e15 * proj.k;
-          if (rad < 0.04) {
+          if (rad < 0.0004) {
             const dotA = Math.max(0.25, 0.6 * depth);
             drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, dotA, Math.max(0.7, rad * 4));
-          } else if (rad < 0.3) {
+          } else if (rad < 0.003) {
             const visAlpha = Math.min(1, 0.4 + depth);
             const grad = ctx.createRadialGradient(proj.px - rad * 0.35, proj.py - rad * 0.35, 0, proj.px, proj.py, rad);
             grad.addColorStop(0, `rgba(${Math.min(255, obj.cr + 30)},${Math.min(255, obj.cg + 30)},${Math.min(255, obj.cb + 30)},${visAlpha.toFixed(2)})`);
