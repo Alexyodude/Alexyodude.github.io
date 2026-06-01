@@ -262,11 +262,12 @@
       decelCorridorMul: 4,         // start decel at threshold × this
       decelPower: 3,               // ease exponent (1=linear, 2=quad, 3=cubic, 4=quart)
       designSpeedDivisor: 4,       // designSpeed = closeThreshold / (linger × this)
-      travelAimRate: 1.2,          // aim slerp rate during travel phase
-      lockAimAt: 3.5,              // lock aim once centreDist < closeThreshold × this (no sweep while body visible)
-      lingerViewFrac: 0.6,         // % of linger spent viewing current body before turning toward next
-      lingerAimBase: 0.15,         // aim slerp during the viewing half (slow — body stays put)
-      lingerAimBlendBonus: 0.9,    // aim slerp grows by this × blend during the transition half
+      travelAimRate: 1.0,          // aim slerp rate during travel phase
+      lockAimAt: 4.0,              // lock aim once centreDist < closeThreshold × this (no sweep while body visible)
+      aimStartFar: 25,             // only start aiming once dist < closeThreshold × this (coast in straight line further out)
+      lingerViewFrac: 0.6,         // (kept for compatibility; linger no longer rotates)
+      lingerAimBase: 0.0,          // unused while linger is rotation-locked
+      lingerAimBlendBonus: 0.0,    // unused while linger is rotation-locked
       velocityLerp: 4,             // velocity smoothing rate during autopilot
       maxWarpExp: 20,              // ceiling on autopilot warp speed in m/s = 10^this
     };
@@ -905,43 +906,49 @@
       } else {
         refX = 0; refY = 0; refZ = 0; haveDir = false;
       }
-      // Score candidates: penalise distance, reward forward direction.
-      // forwardness in [-1, 1]; we shift to [0, 1] so behind targets become 50% as appealing.
-      function scoreCandidate(d2, dx, dy, dz) {
-        if (!haveDir) return d2;
-        const dn = Math.sqrt(d2) || 1;
-        const fwd = (dx * refX + dy * refY + dz * refZ) / dn; // [-1, 1]
-        const forwardBias = 0.5 + 0.5 * fwd; // [0, 1], 1 = directly ahead
-        // Big penalty for behind targets so they're chosen only as last resort.
-        return d2 / (0.15 + forwardBias);
-      }
-      // Two-pass: first prefer "in front" (forwardness > 0.3), then accept anything.
-      for (const radius of [4, 8, 16, 32, 60]) {
-        let best = null, bestScore = Infinity;
-        for (let dx = -radius; dx <= radius; dx++) {
-          for (let dy = -radius; dy <= radius; dy++) {
-            for (let dz = -radius; dz <= radius; dz++) {
-              const objs = getChunk(ccx + dx, ccy + dy, ccz + dz);
-              for (const obj of objs) {
-                if (!AUTOPILOT_TYPES.includes(obj.type)) continue;
-                const k = poiKey(obj);
-                if (autopilotVisited.includes(k)) continue;
-                const ddx = obj.wx - cam[0];
-                const ddy = obj.wy - cam[1];
-                const ddz = obj.wz - cam[2];
-                const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
-                const score = scoreCandidate(d2, ddx, ddy, ddz);
-                if (score < bestScore) { bestScore = score; best = obj; }
+      // Two-pass: first only accept candidates within 90° of travel direction
+      // (forwardness >= 0, hard cap on per-transition rotation). Fall back to
+      // any candidate if nothing in the forward hemisphere is unvisited.
+      function searchPass(requireForward) {
+        for (const radius of [4, 8, 16, 32, 60]) {
+          let best = null, bestScore = Infinity;
+          for (let dx = -radius; dx <= radius; dx++) {
+            for (let dy = -radius; dy <= radius; dy++) {
+              for (let dz = -radius; dz <= radius; dz++) {
+                const objs = getChunk(ccx + dx, ccy + dy, ccz + dz);
+                for (const obj of objs) {
+                  if (!AUTOPILOT_TYPES.includes(obj.type)) continue;
+                  const k = poiKey(obj);
+                  if (autopilotVisited.includes(k)) continue;
+                  const ddx = obj.wx - cam[0];
+                  const ddy = obj.wy - cam[1];
+                  const ddz = obj.wz - cam[2];
+                  const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+                  let score = d2;
+                  if (haveDir) {
+                    const dn = Math.sqrt(d2) || 1;
+                    const fwd = (ddx * refX + ddy * refY + ddz * refZ) / dn;
+                    if (requireForward && fwd < 0) continue; // > 90° from heading
+                    score = d2 / (0.2 + 0.8 * Math.max(0, 0.5 + 0.5 * fwd));
+                  }
+                  if (score < bestScore) { bestScore = score; best = obj; }
+                }
               }
             }
           }
+          if (best) {
+            autopilotVisited.push(poiKey(best));
+            while (autopilotVisited.length > 500) autopilotVisited.shift();
+            return best;
+          }
         }
-        if (best) {
-          autopilotVisited.push(poiKey(best));
-          while (autopilotVisited.length > 500) autopilotVisited.shift();
-          return best;
-        }
+        return null;
       }
+      const forwardFirst = searchPass(haveDir);
+      if (forwardFirst) return forwardFirst;
+      // Last resort — no candidates in the forward hemisphere; accept anywhere.
+      const anywhere = searchPass(false);
+      if (anywhere) return anywhere;
       return null;
     }
     document.querySelectorAll('.coord-visit').forEach((btn) => {
@@ -1543,47 +1550,24 @@
 
             if (autopilotPhase === 'traveling') {
               const baseSpeed = decelSpeed(dist, designSpeed, closeThreshold);
-              // Once we're close enough that the body fills the frame, LOCK the
-              // direction — no more chasing the aim point with rotation as it
-              // sweeps past our peripheral. User: "once the body is in view
-              // there shouldn't be a need to rotate".
-              if (centreDist < closeThreshold * autoCfg.lockAimAt) {
+              // Aim only in the mid-range window between aimStartFar and lockAimAt
+              // thresholds. Far out we just coast in a straight line; close in we
+              // lock direction because the body fills the frame.
+              const aimingZone = (centreDist < closeThreshold * autoCfg.aimStartFar)
+                             && (centreDist >= closeThreshold * autoCfg.lockAimAt);
+              if (aimingZone) {
+                [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, autoCfg.travelAimRate);
+              } else {
                 tvx = fx * baseSpeed;
                 tvy = fy * baseSpeed;
                 tvz = fz * baseSpeed;
-              } else {
-                [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, autoCfg.travelAimRate);
               }
-            } else if (nextAutopilotTarget) {
-              // Linger: camera direction is LOCKED throughout — no rotation
-              // while the body is on screen. We do silently blend the velocity
-              // VECTOR toward the next target so by the end of linger the
-              // trajectory already points the right way. The camera catches up
-              // via the travel-phase aim AFTER the current body is behind us.
-              const lingerT = Math.min(1, (tAnimSec - autopilotLingerStart) / autoCfg.linger);
-              const blend = Math.max(0, (lingerT - autoCfg.lingerViewFrac) / Math.max(0.01, 1 - autoCfg.lingerViewFrac));
-              const blendS = Math.min(1, blend) * Math.min(1, blend) * (3 - 2 * Math.min(1, blend));
-              const ndx = (nextAutopilotTarget.wx + nextAutopilotOffset[0]) - cam[0];
-              const ndy = (nextAutopilotTarget.wy + nextAutopilotOffset[1]) - cam[1];
-              const ndz = (nextAutopilotTarget.wz + nextAutopilotOffset[2]) - cam[2];
-              const nd  = Math.sqrt(ndx * ndx + ndy * ndy + ndz * ndz) || 1;
-              const nextRadius = nextAutopilotTarget.physRadius || 1e9;
-              const nextApproachMul = autoApproachFor(nextAutopilotTarget.type);
-              const nextThreshold = nextRadius * nextApproachMul;
-              const nextDesignSp = nextThreshold / (autoCfg.linger * autoCfg.designSpeedDivisor);
-              const nextWarp = decelSpeed(nd, nextDesignSp, nextThreshold);
-              const baseSpeed = designSpeed + (nextWarp - designSpeed) * blendS;
-              // Blend velocity direction from camera-forward → toward next target.
-              const nnx = ndx / nd, nny = ndy / nd, nnz = ndz / nd;
-              const dirX = fx * (1 - blendS) + nnx * blendS;
-              const dirY = fy * (1 - blendS) + nny * blendS;
-              const dirZ = fz * (1 - blendS) + nnz * blendS;
-              const dirN = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 1;
-              tvx = (dirX / dirN) * baseSpeed;
-              tvy = (dirY / dirN) * baseSpeed;
-              tvz = (dirZ / dirN) * baseSpeed;
             } else {
-              // No next target yet — drift forward at design speed.
+              // Linger: pure locked-direction drift. No rotation, no velocity
+              // re-direction. Body sits in view, camera doesn't move. At
+              // linger end the target swaps and travel handles getting to the
+              // next body — and since the POI picker only allows ≤90° next
+              // targets, the worst-case travel-phase rotation is bounded.
               tvx = fx * designSpeed;
               tvy = fy * designSpeed;
               tvz = fz * designSpeed;
