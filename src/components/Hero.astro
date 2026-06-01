@@ -10,8 +10,10 @@ const socials = [
 ---
 
 <section class="px-6 py-24 md:py-32 max-w-3xl mx-auto">
-  <h1 class="text-5xl md:text-7xl font-bold tracking-tight">
-    Jihoon Park <span lang="ko">박지훈</span> Alex
+  <h1 class="hero-name text-5xl md:text-7xl font-bold tracking-tight">
+    <span class="hero-name-part">Alex</span>
+    <span class="hero-name-part">Jihoon Park</span>
+    <span class="hero-name-part" lang="ko">박지훈</span>
   </h1>
   <p class="mt-6 text-xl md:text-2xl text-muted">{bio}</p>
   <ul class="mt-8 flex flex-wrap items-center gap-4">
@@ -31,6 +33,12 @@ const socials = [
 </section>
 
 <style>
+  .hero-name { display: flex; flex-wrap: wrap; gap: 0.5em; line-height: 1.05; }
+  .hero-name-part { display: inline-block; }
+  /* On small viewports each name on its own line. */
+  @media (max-width: 640px) {
+    .hero-name { flex-direction: column; gap: 0.1em; }
+  }
   .social-icon {
     display: inline-block;
     width: 22px;
