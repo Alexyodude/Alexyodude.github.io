@@ -74,6 +74,10 @@ const entries = (timeline as Entry[]).slice().reverse();
     function init() {
       const el = document.getElementById('timeline-row');
       if (!el) return;
+      // Default to the right end so the most recent entry is visible on load.
+      const scrollToEnd = () => { el.scrollLeft = el.scrollWidth - el.clientWidth; };
+      scrollToEnd();
+      window.addEventListener('load', scrollToEnd);
       let isDown = false;
       let startX = 0;
       let startScroll = 0;
