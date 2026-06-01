@@ -59,11 +59,11 @@
       decelCorridorMul: 4,         // start decel at threshold × this
       decelPower: 3,               // ease exponent (1=linear, 2=quad, 3=cubic, 4=quart)
       designSpeedDivisor: 4,       // designSpeed = closeThreshold / (linger × this)
-      travelAimRate: 2.5,          // aim slerp rate during travel phase
+      travelAimRate: 1.2,          // aim slerp rate during travel phase
       lockAimAt: 3.5,              // lock aim once centreDist < closeThreshold × this (no sweep while body visible)
       lingerViewFrac: 0.6,         // % of linger spent viewing current body before turning toward next
-      lingerAimBase: 0.2,          // aim slerp during the viewing half (slow — body stays put)
-      lingerAimBlendBonus: 1.5,    // aim slerp grows by this × blend during the transition half
+      lingerAimBase: 0.15,         // aim slerp during the viewing half (slow — body stays put)
+      lingerAimBlendBonus: 0.9,    // aim slerp grows by this × blend during the transition half
       velocityLerp: 4,             // velocity smoothing rate during autopilot
       maxWarpExp: 20,              // ceiling on autopilot warp speed in m/s = 10^this
     };
@@ -714,7 +714,7 @@
         }
         if (best) {
           autopilotVisited.push(poiKey(best));
-          while (autopilotVisited.length > 80) autopilotVisited.shift();
+          while (autopilotVisited.length > 500) autopilotVisited.shift();
           return best;
         }
       }
@@ -1288,9 +1288,14 @@
               let dYaw = aimYaw - yaw;
               while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
               while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
-              const aimLerp = Math.min(1, dt * aimRate);
+              const dPitch = aimPitch - pitch;
+              // Ease-out: rotation slows as the angle closes, so the final
+              // approach to alignment is gentle instead of stopping abruptly.
+              const angErr = Math.sqrt(dYaw * dYaw + dPitch * dPitch);
+              const damping = Math.min(1, 0.3 + 0.7 * Math.sqrt(angErr / (Math.PI * 0.5)));
+              const aimLerp = Math.min(1, dt * aimRate * damping);
               yaw   += dYaw * aimLerp;
-              pitch += (aimPitch - pitch) * aimLerp;
+              pitch += dPitch * aimLerp;
               // Recompute forward with the just-updated yaw/pitch so velocity and
               // camera stay perfectly in sync (no one-frame lag).
               const nCp = Math.cos(pitch), nSp = Math.sin(pitch);
