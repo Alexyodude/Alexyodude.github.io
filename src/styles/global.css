@@ -54,9 +54,10 @@ a {
   text-decoration: none;
 }
 
-/* Background-coloured halo around overlay text so it stays legible where the
-   star canvas underneath has dense bright spots. The halo paints the bg colour
-   around glyphs, "punching through" the starfield exactly where text crosses. */
+/* Per-character contrast halo: bg-coloured pixel outline immediately around
+   each glyph (4-directional offset shadows + tight blur) plus a wider soft
+   glow. Each character "punches through" the starfield exactly where its
+   silhouette sits, so glyphs stay legible against any density of stars. */
 main h1,
 main h2,
 main h3,
@@ -69,7 +70,16 @@ footer p,
 footer a,
 footer span {
   text-shadow:
-    0 0 4px var(--color-bg),
-    0 0 10px var(--color-bg),
-    0 0 18px var(--color-bg);
+    /* tight per-character outline (4 cardinal + 4 diagonal offsets) */
+    -1px -1px 0 var(--color-bg),
+     1px -1px 0 var(--color-bg),
+    -1px  1px 0 var(--color-bg),
+     1px  1px 0 var(--color-bg),
+     0   -1px 0 var(--color-bg),
+     0    1px 0 var(--color-bg),
+    -1px  0   0 var(--color-bg),
+     1px  0   0 var(--color-bg),
+    /* soft surrounding glow */
+    0 0 6px var(--color-bg),
+    0 0 14px var(--color-bg);
 }
