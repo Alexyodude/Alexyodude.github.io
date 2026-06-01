@@ -21,13 +21,13 @@ const entries = timeline as Entry[];
     <span class="text-fg">King's College London</span> (BSc and MSc). Completed military service 2024–2025.
   </p>
 
-  <ol class="mt-10 relative border-l border-border ml-3">
+  <ol class="mt-10 flex gap-3 overflow-x-auto pb-4 relative">
+    <span class="absolute left-0 right-0 top-3 h-px bg-border" aria-hidden="true"></span>
     {entries.map((e) => (
-      <li class="relative pl-8 pb-8 last:pb-0">
-        <span class="absolute -left-[7px] top-1.5 h-3 w-3 rounded-full bg-accent ring-4 ring-bg"></span>
-        <div class="text-xs uppercase tracking-widest text-muted">{e.date}</div>
-        <h3 class="mt-1 text-lg font-semibold">{e.title}</h3>
-        <p class="mt-1 text-sm text-muted">{e.description}</p>
+      <li class="relative shrink-0 w-36 pt-5">
+        <span class="absolute left-1/2 top-2 -translate-x-1/2 h-3 w-3 rounded-full bg-accent ring-4 ring-bg"></span>
+        <div class="text-[10px] uppercase tracking-widest text-muted text-center">{e.date}</div>
+        <div class="mt-1 text-sm font-semibold leading-tight text-center">{e.title}</div>
       </li>
     ))}
   </ol>
