@@ -60,10 +60,10 @@
       decelPower: 3,               // ease exponent (1=linear, 2=quad, 3=cubic, 4=quart)
       designSpeedDivisor: 4,       // designSpeed = closeThreshold / (linger × this)
       travelAimRate: 2.5,          // aim slerp rate during travel phase
-      lockAimAt: 2.0,              // lock aim once centreDist < closeThreshold × this (no sweep while body visible)
-      lingerViewFrac: 0.45,        // % of linger spent viewing current body before turning toward next
-      lingerAimBase: 0.45,         // aim slerp during the viewing half (slow — body stays put)
-      lingerAimBlendBonus: 2.5,    // aim slerp grows by this × blend during the transition half
+      lockAimAt: 3.5,              // lock aim once centreDist < closeThreshold × this (no sweep while body visible)
+      lingerViewFrac: 0.6,         // % of linger spent viewing current body before turning toward next
+      lingerAimBase: 0.2,          // aim slerp during the viewing half (slow — body stays put)
+      lingerAimBlendBonus: 1.5,    // aim slerp grows by this × blend during the transition half
       velocityLerp: 4,             // velocity smoothing rate during autopilot
       maxWarpExp: 20,              // ceiling on autopilot warp speed in m/s = 10^this
     };
