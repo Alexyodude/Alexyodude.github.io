@@ -72,9 +72,10 @@
       velocityLerp: 4,             // velocity smoothing rate during autopilot
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this
       maxRotateSec: 30,            // very loose cap (effectively off) — let rotation complete
-      maxAngleChange: 1.2,         // ~69° — picker accepts most candidates so it always finds one
+      maxAngleChange: 0.524,       // 30° — picker only accepts POIs within this forward cone
       aimAngularVel: 1.5,          // rad/sec angular velocity of the smooth aim (constant rate, not exponential)
       steerRate: 2.0,              // velocity-vector steering rate — fraction of baseSpeed added toward target per second before renormalisation
+      accelRate: 0.8,              // exponential rate at which actual |v| eases toward the target magnitude (gradual increase/decrease at each POI)
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -761,14 +762,10 @@
         }
         return null;
       }
+      // Single strict pass — POIs must be within the 30° forward cone.
+      // No fallback to wider cones (user wants future-cone-only targeting).
       const strict = searchPass(autoCfg.maxAngleChange);
       if (strict) return strict;
-      // Fall back: widen the cap to π/2 (90°) if nothing in the strict cone.
-      const wide = searchPass(Math.PI * 0.5);
-      if (wide) return wide;
-      // Last resort — accept anything (180°).
-      const anywhere = searchPass(Math.PI);
-      if (anywhere) return anywhere;
       return null;
     }
     document.querySelectorAll('.coord-visit').forEach((btn) => {
@@ -1408,32 +1405,35 @@
             const designSpeed = closeThreshold / (autoCfg.linger * autoCfg.designSpeedDivisor);
 
             if (autopilotPhase === 'traveling') {
-              // Vector-addition steering: each frame we ADD a target-direction
-              // increment to the current velocity vector, then renormalize the
-              // magnitude back to the per-distance speed (capped at maxWarp).
-              // Velocity direction smoothly converges to the target direction
-              // over many additions; magnitude is always at the cap. No camera
-              // rotation — pure translation through space.
+              // Vector-addition steering: each frame ADD a target-direction
+              // increment to velocity, then renormalise the magnitude. The
+              // magnitude target eases smoothly toward baseSpeed via accelRate
+              // so velocity gradually rises after handoff and gradually falls
+              // as we approach (decelSpeed already shrinks baseSpeed near the
+              // body). No camera rotation.
               const baseSpeed = Math.min(decelSpeed(dist, designSpeed, closeThreshold), Math.pow(10, autoCfg.maxWarpExp));
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
               const tdx = dx / dn, tdy = dy / dn, tdz = dz / dn;
-              // Vector addition: nudge velocity toward target direction.
+              // Vector addition toward target.
               const addMag = baseSpeed * autoCfg.steerRate * dt;
               const newVx = velocity[0] + tdx * addMag;
               const newVy = velocity[1] + tdy * addMag;
               const newVz = velocity[2] + tdz * addMag;
+              // Smoothed magnitude target — current |v| eases toward baseSpeed.
+              const currentMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+              const accelLerp = Math.min(1, dt * autoCfg.accelRate);
+              const smoothedMag = currentMag + (baseSpeed - currentMag) * accelLerp;
               const newMag = Math.sqrt(newVx * newVx + newVy * newVy + newVz * newVz);
               if (newMag > 1e-9) {
-                const scale = baseSpeed / newMag;
+                const scale = smoothedMag / newMag;
                 velocity[0] = newVx * scale;
                 velocity[1] = newVy * scale;
                 velocity[2] = newVz * scale;
               } else {
-                velocity[0] = tdx * baseSpeed;
-                velocity[1] = tdy * baseSpeed;
-                velocity[2] = tdz * baseSpeed;
+                velocity[0] = tdx * smoothedMag;
+                velocity[1] = tdy * smoothedMag;
+                velocity[2] = tdz * smoothedMag;
               }
-              // Set tvx = velocity so the post-loop lerp leaves us untouched.
               tvx = velocity[0]; tvy = velocity[1]; tvz = velocity[2];
             } else {
               // Linger: hold position dead-still. Zero target velocity, no
