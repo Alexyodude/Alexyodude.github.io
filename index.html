@@ -694,9 +694,29 @@
       const ccx = Math.floor(cam[0] / CHUNK_SIZE);
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
       const ccz = Math.floor(cam[2] / CHUNK_SIZE);
-      // Expand search until we find something
+      // Reference direction = current velocity (or last known forward if stopped).
+      // Used to prefer candidates that are roughly in front so we don't U-turn.
+      const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+      let refX, refY, refZ, haveDir;
+      if (vMag > 1) {
+        refX = velocity[0] / vMag; refY = velocity[1] / vMag; refZ = velocity[2] / vMag;
+        haveDir = true;
+      } else {
+        refX = 0; refY = 0; refZ = 0; haveDir = false;
+      }
+      // Score candidates: penalise distance, reward forward direction.
+      // forwardness in [-1, 1]; we shift to [0, 1] so behind targets become 50% as appealing.
+      function scoreCandidate(d2, dx, dy, dz) {
+        if (!haveDir) return d2;
+        const dn = Math.sqrt(d2) || 1;
+        const fwd = (dx * refX + dy * refY + dz * refZ) / dn; // [-1, 1]
+        const forwardBias = 0.5 + 0.5 * fwd; // [0, 1], 1 = directly ahead
+        // Big penalty for behind targets so they're chosen only as last resort.
+        return d2 / (0.15 + forwardBias);
+      }
+      // Two-pass: first prefer "in front" (forwardness > 0.3), then accept anything.
       for (const radius of [4, 8, 16, 32, 60]) {
-        let best = null, bestD2 = Infinity;
+        let best = null, bestScore = Infinity;
         for (let dx = -radius; dx <= radius; dx++) {
           for (let dy = -radius; dy <= radius; dy++) {
             for (let dz = -radius; dz <= radius; dz++) {
@@ -709,7 +729,8 @@
                 const ddy = obj.wy - cam[1];
                 const ddz = obj.wz - cam[2];
                 const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
-                if (d2 < bestD2) { bestD2 = d2; best = obj; }
+                const score = scoreCandidate(d2, ddx, ddy, ddz);
+                if (score < bestScore) { bestScore = score; best = obj; }
               }
             }
           }
