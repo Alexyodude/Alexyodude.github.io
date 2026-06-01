@@ -45,6 +45,7 @@
     let nextAutopilotTarget = null; // pre-acquired during linger for smooth handoff
     let autopilotPhase = 'searching'; // 'traveling' | 'lingering' | 'searching'
     let autopilotLingerStart = 0;
+    let autopilotTravelStart = 0; // wall-clock sec when current travel began (for max-rotate-time cap)
     const autopilotOffset = [0, 0, 0]; // perpendicular fly-by offset (so we pass on the side)
     const nextAutopilotOffset = [0, 0, 0]; // fly-by offset for the queued next target
     const autopilotVisited = []; // ring buffer of recent target keys to avoid loops
@@ -68,6 +69,7 @@
       lingerAimBlendBonus: 0.0,    // unused while linger is rotation-locked
       velocityLerp: 4,             // velocity smoothing rate during autopilot
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this
+      maxRotateSec: 1.0,           // HARD cap: rotation cannot exceed this many seconds per travel phase
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -433,6 +435,7 @@
       { key: 'lingerAimBlendBonus', label: 'linger aim +',  min: 0,   max: 5,   step: 0.1 },
       { key: 'velocityLerp',        label: 'vel smoothing', min: 1,   max: 12,  step: 0.5 },
       { key: 'maxWarpExp',          label: 'max warp 10^',  min: 16,  max: 24,  step: 0.5 },
+      { key: 'maxRotateSec',        label: 'max rotate s',  min: 0,   max: 5,   step: 0.1 },
     ];
     function fmtVal(v) {
       return Number.isInteger(v) ? String(v) : (Math.round(v * 100) / 100).toString();
@@ -1274,6 +1277,7 @@
         function acquireNewTarget() {
           autopilotTarget = findNextAutopilotPOI();
           autopilotPhase = 'traveling';
+          autopilotTravelStart = tAnimSec;
           if (!autopilotTarget) return;
           computeFlyByOffset(autopilotTarget, autopilotOffset);
           snapAimToCurrentTarget();
@@ -1312,6 +1316,7 @@
                 autopilotOffset[2] = nextAutopilotOffset[2];
                 nextAutopilotTarget = null;
                 autopilotPhase = 'traveling';
+                autopilotTravelStart = tAnimSec;
                 snapAimToCurrentTarget();
               } else {
                 acquireNewTarget();
@@ -1385,7 +1390,11 @@
               const angErr0 = Math.sqrt(dYaw0 * dYaw0 + dPitch0 * dPitch0);
               const inLockZone = centreDist < closeThreshold * autoCfg.lockAimAt;
               const aimed = angErr0 < autoCfg.aimLockEpsilon;
-              if (aimed || inLockZone) {
+              // HARD time cap on rotation — even if not aimed yet, stop turning
+              // after autoCfg.maxRotateSec into the travel phase. After this
+              // the camera coasts in whatever direction it's currently facing.
+              const rotationTimedOut = (tAnimSec - autopilotTravelStart) > autoCfg.maxRotateSec;
+              if (aimed || inLockZone || rotationTimedOut) {
                 tvx = fx * baseSpeed;
                 tvy = fy * baseSpeed;
                 tvz = fz * baseSpeed;
