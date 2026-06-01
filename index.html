@@ -50,7 +50,11 @@
     const autopilotOffset = [0, 0, 0]; // perpendicular fly-by offset (so we pass on the side)
     const nextAutopilotOffset = [0, 0, 0]; // fly-by offset for the queued next target
     const autopilotVisited = []; // ring buffer of recent target keys to avoid loops
-    const AUTOPILOT_LINGER = 5; // seconds spent near each POI after closing in
+    const AUTOPILOT_LINGER = 7; // seconds spent near each POI after closing in
+    // Per-type approach distance multiplier (× physRadius). Smaller = closer
+    // fly-by. Reused from the "go to" buttons so the autopilot lands at the
+    // same intimate viewing distance.
+    const AUTOPILOT_APPROACH = { planet: 6, star: 18, blackhole: 50 };
     const AUTOPILOT_TYPES = ['planet', 'star', 'blackhole'];
     let lastFrameMs = performance.now();
     let lastSavedMs = 0;
@@ -1069,7 +1073,8 @@
           const cdz = autopilotTarget.wz - cam[2];
           const centreDist = Math.sqrt(cdx * cdx + cdy * cdy + cdz * cdz);
           const targetRadius = autopilotTarget.physRadius || 1e9;
-          const closeThreshold = targetRadius * 30;
+          const approachMul = AUTOPILOT_APPROACH[autopilotTarget.type] || 18;
+          const closeThreshold = targetRadius * approachMul;
           if (autopilotPhase === 'traveling' && centreDist < closeThreshold) {
             autopilotPhase = 'lingering';
             autopilotLingerStart = tAnimSec;
@@ -1122,7 +1127,10 @@
               // together via the alignment coupling.
               const lingerT = Math.min(1, (tAnimSec - autopilotLingerStart) / AUTOPILOT_LINGER);
               const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
-              const coastSpeed = Math.max(targetRadius * 4, Math.min(vMag, targetRadius * 8));
+              // Designed so we drift across ~half the approach distance over the
+              // whole linger window — body stays in frame the whole time.
+              const designSpeed = closeThreshold / (AUTOPILOT_LINGER * 2);
+              const coastSpeed = Math.max(designSpeed * 0.5, Math.min(vMag * 0.4, designSpeed * 1.5));
               if (nextAutopilotTarget) {
                 const ndx = (nextAutopilotTarget.wx + nextAutopilotOffset[0]) - cam[0];
                 const ndy = (nextAutopilotTarget.wy + nextAutopilotOffset[1]) - cam[1];
