@@ -1489,12 +1489,43 @@
         if (!autopilotTarget) acquireNewTarget();
         if (autopilotTarget) {
           autopilotActive = true;
-          // Aim at the offset-target so we approach the side, not the centre.
+          // PHASE TRANSITIONS FIRST — using a quick centreDist check on the
+          // CURRENT target. We avoid computing the heavy dx/dy/dz block until
+          // after a possible handoff so the per-frame physics uses the right
+          // (post-handoff) target, not the stale pre-handoff one.
+          {
+            const pcdx = autopilotTarget.wx - cam[0];
+            const pcdy = autopilotTarget.wy - cam[1];
+            const pcdz = autopilotTarget.wz - cam[2];
+            const pcDist = Math.sqrt(pcdx * pcdx + pcdy * pcdy + pcdz * pcdz);
+            const pRadius = autopilotTarget.physRadius || 1e9;
+            const pApproachMul = autoApproachFor(autopilotTarget.type);
+            const pCloseThreshold = pRadius * pApproachMul;
+            if (autopilotPhase === 'traveling' && pcDist < pCloseThreshold) {
+              autopilotPhase = 'lingering';
+              autopilotLingerStart = tAnimSec;
+              prepareNextTarget();
+              velocity[0] = 0; velocity[1] = 0; velocity[2] = 0;
+            }
+            if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > autoCfg.linger) {
+              if (nextAutopilotTarget) {
+                autopilotTarget = nextAutopilotTarget;
+                autopilotOffset[0] = nextAutopilotOffset[0];
+                autopilotOffset[1] = nextAutopilotOffset[1];
+                autopilotOffset[2] = nextAutopilotOffset[2];
+                nextAutopilotTarget = null;
+                autopilotPhase = 'traveling';
+                snapAimToCurrentTarget();
+              } else {
+                acquireNewTarget();
+              }
+            }
+          }
+          // Now compute physics quantities against the (possibly new) target.
           const dx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
           const dy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
           const dz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
           const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          // Distance to the object centre — used for phase transitions
           const cdx = autopilotTarget.wx - cam[0];
           const cdy = autopilotTarget.wy - cam[1];
           const cdz = autopilotTarget.wz - cam[2];
@@ -1502,29 +1533,6 @@
           const targetRadius = autopilotTarget.physRadius || 1e9;
           const approachMul = autoApproachFor(autopilotTarget.type);
           const closeThreshold = targetRadius * approachMul;
-          if (autopilotPhase === 'traveling' && centreDist < closeThreshold) {
-            autopilotPhase = 'lingering';
-            autopilotLingerStart = tAnimSec;
-            prepareNextTarget(); // queue the next POI so handoff is smooth
-            // Snap velocity to zero so we hold position dead-still during linger
-            // — no drift past, no parallax of the body across the screen.
-            velocity[0] = 0; velocity[1] = 0; velocity[2] = 0;
-          }
-          if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > autoCfg.linger) {
-            // Smooth handoff: promote pre-acquired next target to current.
-            // No re-aiming needed — we've been blending toward it during linger.
-            if (nextAutopilotTarget) {
-              autopilotTarget = nextAutopilotTarget;
-              autopilotOffset[0] = nextAutopilotOffset[0];
-              autopilotOffset[1] = nextAutopilotOffset[1];
-              autopilotOffset[2] = nextAutopilotOffset[2];
-              nextAutopilotTarget = null;
-              autopilotPhase = 'traveling';
-              snapAimToCurrentTarget(); // snap aim so travel doesn't visibly rotate
-            } else {
-              acquireNewTarget();
-            }
-          }
           if (autopilotTarget && dist > 1) {
             // Smoothly aim toward (toX,toY,toZ) and return velocity along the
             // UPDATED camera-forward axis. As the camera rotates, velocity
