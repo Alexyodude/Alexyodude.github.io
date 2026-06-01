@@ -272,7 +272,9 @@
       lingerAimBlendBonus: 0.0,    // unused while linger is rotation-locked
       velocityLerp: 4,             // velocity smoothing rate during autopilot
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this
-      maxRotateSec: 1.0,           // HARD cap: rotation cannot exceed this many seconds per travel phase
+      maxRotateSec: 3.0,           // soft cap: travel rotation finishes inside this many seconds
+      maxAngleChange: 0.6,         // ~34° — picker only accepts targets within this many radians of forward
+      aimAngularVel: 0.5,          // rad/sec angular velocity of the smooth aim (constant rate, not exponential)
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -639,6 +641,8 @@
       { key: 'velocityLerp',        label: 'vel smoothing', min: 1,   max: 12,  step: 0.5 },
       { key: 'maxWarpExp',          label: 'max warp 10^',  min: 16,  max: 24,  step: 0.5 },
       { key: 'maxRotateSec',        label: 'max rotate s',  min: 0,   max: 5,   step: 0.1 },
+      { key: 'maxAngleChange',      label: 'max Δangle rad',min: 0.05, max: Math.PI, step: 0.05 },
+      { key: 'aimAngularVel',       label: 'aim ω rad/s',   min: 0.05, max: 3,    step: 0.05 },
     ];
     function fmtVal(v) {
       return Number.isInteger(v) ? String(v) : (Math.round(v * 100) / 100).toString();
@@ -913,10 +917,11 @@
         const cy = Math.cos(yaw),   sy = Math.sin(yaw);
         refX = sy * cp; refY = -sp; refZ = cy * cp;
       }
-      // Two-pass: first only accept candidates within 90° of travel direction
-      // (forwardness >= 0, hard cap on per-transition rotation). Fall back to
-      // any candidate if nothing in the forward hemisphere is unvisited.
-      function searchPass(requireForward) {
+      // Score candidates by ANGLE primarily (minimal angle change wins),
+      // distance secondary. Hard reject if angle > autoCfg.maxAngleChange.
+      // First pass enforces the angle cap; only if nothing qualifies do we
+      // fall back to accepting any forward candidate.
+      function searchPass(angleCapRad) {
         for (const radius of [4, 8, 16, 32, 60]) {
           let best = null, bestScore = Infinity;
           for (let dx = -radius; dx <= radius; dx++) {
@@ -931,12 +936,17 @@
                   const ddy = obj.wy - cam[1];
                   const ddz = obj.wz - cam[2];
                   const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
-                  let score = d2;
+                  let score;
                   if (haveDir) {
                     const dn = Math.sqrt(d2) || 1;
-                    const fwd = (ddx * refX + ddy * refY + ddz * refZ) / dn;
-                    if (requireForward && fwd < 0) continue; // > 90° from heading
-                    score = d2 / (0.2 + 0.8 * Math.max(0, 0.5 + 0.5 * fwd));
+                    const fwd = Math.max(-1, Math.min(1, (ddx * refX + ddy * refY + ddz * refZ) / dn));
+                    const angle = Math.acos(fwd);
+                    if (angle > angleCapRad) continue;
+                    // Quadratic angle penalty so small angles dominate.
+                    // 0° at any dist beats 30° at the same distance.
+                    score = d2 * (1 + angle * angle * 16);
+                  } else {
+                    score = d2;
                   }
                   if (score < bestScore) { bestScore = score; best = obj; }
                 }
@@ -951,10 +961,13 @@
         }
         return null;
       }
-      const forwardFirst = searchPass(haveDir);
-      if (forwardFirst) return forwardFirst;
-      // Last resort — no candidates in the forward hemisphere; accept anywhere.
-      const anywhere = searchPass(false);
+      const strict = searchPass(autoCfg.maxAngleChange);
+      if (strict) return strict;
+      // Fall back: widen the cap to π/2 (90°) if nothing in the strict cone.
+      const wide = searchPass(Math.PI * 0.5);
+      if (wide) return wide;
+      // Last resort — accept anything (180°).
+      const anywhere = searchPass(Math.PI);
       if (anywhere) return anywhere;
       return null;
     }
@@ -1483,7 +1496,9 @@
           autopilotTravelStart = tAnimSec;
           if (!autopilotTarget) return;
           computeFlyByOffset(autopilotTarget, autopilotOffset);
-          snapAimToCurrentTarget();
+          // No snap — rotation is smooth and continuous via aimAndMove during
+          // travel. The picker has already enforced a small max angle so the
+          // rotation finishes within a fraction of a second at aimAngularVel.
         }
         function prepareNextTarget() {
           if (nextAutopilotTarget) return;
@@ -1520,7 +1535,7 @@
                 nextAutopilotTarget = null;
                 autopilotPhase = 'traveling';
                 autopilotTravelStart = tAnimSec;
-                snapAimToCurrentTarget();
+                // No snap — rotation is smooth and continuous via aimAndMove.
               } else {
                 acquireNewTarget();
               }
@@ -1550,13 +1565,19 @@
               while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
               while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
               const dPitch = aimPitch - pitch;
-              // Ease-out: rotation slows as the angle closes, so the final
-              // approach to alignment is gentle instead of stopping abruptly.
+              // Constant angular velocity for a uniformly smooth turn — no
+              // exponential snap at the end. Once within one step of target,
+              // land exactly on it.
               const angErr = Math.sqrt(dYaw * dYaw + dPitch * dPitch);
-              const damping = Math.min(1, 0.3 + 0.7 * Math.sqrt(angErr / (Math.PI * 0.5)));
-              const aimLerp = Math.min(1, dt * aimRate * damping);
-              yaw   += dYaw * aimLerp;
-              pitch += dPitch * aimLerp;
+              const maxStep = autoCfg.aimAngularVel * dt;
+              if (angErr <= maxStep || angErr < 1e-6) {
+                yaw = aimYaw;
+                pitch = aimPitch;
+              } else {
+                const k = maxStep / angErr;
+                yaw   += dYaw * k;
+                pitch += dPitch * k;
+              }
               // Recompute forward with the just-updated yaw/pitch so velocity and
               // camera stay perfectly in sync (no one-frame lag).
               const nCp = Math.cos(pitch), nSp = Math.sin(pitch);
