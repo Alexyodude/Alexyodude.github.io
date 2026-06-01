@@ -1550,12 +1550,11 @@
 
             if (autopilotPhase === 'traveling') {
               const baseSpeed = decelSpeed(dist, designSpeed, closeThreshold);
-              // Aim only in the mid-range window between aimStartFar and lockAimAt
-              // thresholds. Far out we just coast in a straight line; close in we
-              // lock direction because the body fills the frame.
-              const aimingZone = (centreDist < closeThreshold * autoCfg.aimStartFar)
-                             && (centreDist >= closeThreshold * autoCfg.lockAimAt);
-              if (aimingZone) {
+              // Aim toward target whenever outside the lock zone — needed to
+              // actually reach the target. Inside lockAimAt × closeThreshold
+              // the body fills the frame and direction is held so we coast
+              // past without sweep-rotation.
+              if (centreDist >= closeThreshold * autoCfg.lockAimAt) {
                 [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, autoCfg.travelAimRate);
               } else {
                 tvx = fx * baseSpeed;
