@@ -23,9 +23,20 @@ const socials = [
           title={s.label}
           class="flex h-11 w-11 items-center justify-center rounded-full border border-border text-muted hover:text-accent hover:border-accent transition-colors"
         >
-          <img src={s.icon} alt="" width="22" height="22" class="opacity-90" style="filter: drop-shadow(0 0 0.5px currentColor);" />
+          <span class="social-icon" style={`--icon: url('${s.icon}');`} aria-hidden="true"></span>
         </a>
       </li>
     ))}
   </ul>
 </section>
+
+<style>
+  .social-icon {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    background-color: currentColor;
+    -webkit-mask: var(--icon) center / contain no-repeat;
+    mask: var(--icon) center / contain no-repeat;
+  }
+</style>
