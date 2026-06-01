@@ -1219,62 +1219,66 @@
             }
           }
           if (autopilotTarget && dist > 1) {
-            // Couple warp speed to aim alignment so rotation and warp ramp as a
-            // single maneuver — camera doesn't fly past while still turning.
-            // alignment: 1 when aimed, ~0 when 90°+ off. Speed scales with this.
-            function aimAndWarp(toX, toY, toZ, toDist, baseSpeed, aimRate) {
+            // Smoothly aim toward (toX,toY,toZ) and return velocity along the
+            // UPDATED camera-forward axis. As the camera rotates, velocity
+            // rotates with it — natural curving flight, no alignment throttle
+            // (which used to slam speed to ~0 when off-aim, causing jolts).
+            function aimAndMove(toX, toY, toZ, baseSpeed, aimRate) {
               const aimYaw = Math.atan2(toX, toZ);
               const aimPitch = -Math.atan2(toY, Math.sqrt(toX * toX + toZ * toZ));
               let dYaw = aimYaw - yaw;
               while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
               while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
-              const dPitch = aimPitch - pitch;
-              const angErr = Math.sqrt(dYaw * dYaw + dPitch * dPitch);
-              // exp(-3·err): aligned (err≈0) → 1, ~90° off (err≈π/2) → ~0.1
-              const alignment = Math.max(0.05, Math.exp(-angErr * 3));
-              // Aim rate also scales with how far off — turn faster when more wrong,
-              // so rotation catches up before warp commits to a direction.
-              const turnBoost = 1 + Math.min(2.5, angErr * 1.5);
-              const aimLerp = Math.min(1, dt * aimRate * turnBoost);
+              const aimLerp = Math.min(1, dt * aimRate);
               yaw   += dYaw * aimLerp;
-              pitch += dPitch * aimLerp;
-              const speed = baseSpeed * alignment;
-              const nx = toX / toDist, ny = toY / toDist, nz = toZ / toDist;
-              return [nx * speed, ny * speed, nz * speed];
+              pitch += (aimPitch - pitch) * aimLerp;
+              // Recompute forward with the just-updated yaw/pitch so velocity and
+              // camera stay perfectly in sync (no one-frame lag).
+              const nCp = Math.cos(pitch), nSp = Math.sin(pitch);
+              const nCy = Math.cos(yaw),   nSy = Math.sin(yaw);
+              const nfx = nSy * nCp, nfy = -nSp, nfz = nCy * nCp;
+              return [nfx * baseSpeed, nfy * baseSpeed, nfz * baseSpeed];
             }
+            // Smooth decel ramp: distance-scaled warp far away, easing toward
+            // designSpeed inside 2.5× the approach corridor. No abrupt drop.
+            function decelSpeed(d, designSp, threshold) {
+              const warp = Math.min(1e18, d * 1.5);
+              if (d > threshold * 2.5) return warp;
+              const t = Math.max(0, Math.min(1, (d - threshold) / (threshold * 1.5)));
+              const ease = t * t * (3 - 2 * t);
+              return designSp + (warp - designSp) * ease;
+            }
+            const designSpeed = closeThreshold / (AUTOPILOT_LINGER * 2);
+
             if (autopilotPhase === 'traveling') {
-              const baseSpeed = Math.min(1e18, dist * 1.5);
-              [tvx, tvy, tvz] = aimAndWarp(dx, dy, dz, dist, baseSpeed, 2.5);
-            } else {
-              // Lingering: blend aim + velocity from "coast past current" toward
-              // "head to next target". Rotation curves and warp accelerates
-              // together via the alignment coupling.
+              const baseSpeed = decelSpeed(dist, designSpeed, closeThreshold);
+              [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, 2.5);
+            } else if (nextAutopilotTarget) {
+              // Linger: rotation aims at next target THROUGHOUT — gradual at the
+              // start so we drift past current first, then increasingly direct.
+              // Speed ramps from drift→warp toward next target as we rotate, so
+              // by the end of the linger we're already aimed AND warping at it.
               const lingerT = Math.min(1, (tAnimSec - autopilotLingerStart) / AUTOPILOT_LINGER);
-              const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
-              // Designed so we drift across ~half the approach distance over the
-              // whole linger window — body stays in frame the whole time.
-              const designSpeed = closeThreshold / (AUTOPILOT_LINGER * 2);
-              const coastSpeed = Math.max(designSpeed * 0.5, Math.min(vMag * 0.4, designSpeed * 1.5));
-              if (nextAutopilotTarget) {
-                const ndx = (nextAutopilotTarget.wx + nextAutopilotOffset[0]) - cam[0];
-                const ndy = (nextAutopilotTarget.wy + nextAutopilotOffset[1]) - cam[1];
-                const ndz = (nextAutopilotTarget.wz + nextAutopilotOffset[2]) - cam[2];
-                const nd  = Math.sqrt(ndx * ndx + ndy * ndy + ndz * ndz) || 1;
-                const blend = lingerT * lingerT * (3 - 2 * lingerT);
-                // Aim toward next target (alignment-gated speed via aimAndWarp).
-                const nextBaseSpeed = Math.min(1e18, nd * 1.5);
-                const aimRate = 1.2 + blend * 2.0;
-                const [nvx, nvy, nvz] = aimAndWarp(ndx, ndy, ndz, nd, nextBaseSpeed, aimRate);
-                // Velocity: blend coast-forward into alignment-gated next-target.
-                const cvx = fx * coastSpeed, cvy = fy * coastSpeed, cvz = fz * coastSpeed;
-                tvx = cvx * (1 - blend) + nvx * blend;
-                tvy = cvy * (1 - blend) + nvy * blend;
-                tvz = cvz * (1 - blend) + nvz * blend;
-              } else {
-                tvx = fx * coastSpeed;
-                tvy = fy * coastSpeed;
-                tvz = fz * coastSpeed;
-              }
+              const blend   = lingerT * lingerT * (3 - 2 * lingerT);
+              const ndx = (nextAutopilotTarget.wx + nextAutopilotOffset[0]) - cam[0];
+              const ndy = (nextAutopilotTarget.wy + nextAutopilotOffset[1]) - cam[1];
+              const ndz = (nextAutopilotTarget.wz + nextAutopilotOffset[2]) - cam[2];
+              const nd  = Math.sqrt(ndx * ndx + ndy * ndy + ndz * ndz) || 1;
+              const nextRadius = nextAutopilotTarget.physRadius || 1e9;
+              const nextApproachMul = AUTOPILOT_APPROACH[nextAutopilotTarget.type] || 18;
+              const nextThreshold = nextRadius * nextApproachMul;
+              const nextDesignSp = nextThreshold / (AUTOPILOT_LINGER * 2);
+              const nextWarp = decelSpeed(nd, nextDesignSp, nextThreshold);
+              // Speed ramps from current designSpeed (drift) → next warp (closing in).
+              const baseSpeed = designSpeed + (nextWarp - designSpeed) * blend;
+              // Aim rate ramps from gentle (drift past) to firm (lock onto next).
+              const aimRate = 1.0 + blend * 2.5;
+              [tvx, tvy, tvz] = aimAndMove(ndx, ndy, ndz, baseSpeed, aimRate);
+            } else {
+              // No next target yet — drift forward at design speed.
+              tvx = fx * designSpeed;
+              tvy = fy * designSpeed;
+              tvz = fz * designSpeed;
             }
           }
         }
@@ -1317,7 +1321,7 @@
       }
       // Smooth current velocity toward target. Faster response during autopilot
       // so warp ramp doesn't eat half the trip; gentler for manual feel otherwise.
-      const lerpV = Math.min(1, dt * (autopilotActive ? 6 : 3.5));
+      const lerpV = Math.min(1, dt * (autopilotActive ? 4 : 3.5));
       velocity[0] += (tvx - velocity[0]) * lerpV;
       velocity[1] += (tvy - velocity[1]) * lerpV;
       velocity[2] += (tvz - velocity[2]) * lerpV;

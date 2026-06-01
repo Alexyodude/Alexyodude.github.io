@@ -7,12 +7,14 @@ type Entry = {
   description: string;
 };
 
-const entries = timeline as Entry[];
+// Timeline JSON is newest-first; reverse so it reads past → future left to right.
+const entries = (timeline as Entry[]).slice().reverse();
 ---
 
 <section class="px-6 py-16 max-w-3xl mx-auto">
-  <ol class="timeline-row flex gap-3 overflow-x-auto pb-2 relative">
+  <ol id="timeline-row" class="timeline-row flex gap-3 pb-2 relative" role="list">
     <span class="absolute left-0 right-0 top-3 h-px bg-border" aria-hidden="true"></span>
+    <span class="timeline-pulse" aria-hidden="true"></span>
     {entries.map((e) => (
       <li class="relative shrink-0 w-36 pt-5">
         <span class="absolute left-1/2 top-2 -translate-x-1/2 h-3 w-3 rounded-full bg-accent ring-4 ring-bg"></span>
@@ -34,6 +36,78 @@ const entries = timeline as Entry[];
 </section>
 
 <style>
-  .timeline-row { scrollbar-width: none; }
+  .timeline-row {
+    overflow-x: auto;
+    cursor: grab;
+    scrollbar-width: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
   .timeline-row::-webkit-scrollbar { display: none; }
+  .timeline-row.dragging { cursor: grabbing; }
+  .timeline-pulse {
+    position: absolute;
+    top: 12px;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    margin-top: -4px;
+    margin-left: -4px;
+    border-radius: 9999px;
+    background: var(--color-accent);
+    box-shadow: 0 0 8px var(--color-accent), 0 0 16px var(--color-accent);
+    pointer-events: none;
+    animation: timelineMove 14s linear infinite, timelinePulse 1.4s ease-in-out infinite;
+  }
+  @keyframes timelineMove {
+    from { left: 0%; }
+    to   { left: 100%; }
+  }
+  @keyframes timelinePulse {
+    0%, 100% { opacity: 0.55; transform: scale(1); }
+    50%      { opacity: 1;    transform: scale(1.8); }
+  }
 </style>
+
+<script is:inline>
+  (function () {
+    function init() {
+      const el = document.getElementById('timeline-row');
+      if (!el) return;
+      let isDown = false;
+      let startX = 0;
+      let startScroll = 0;
+      let moved = false;
+      const start = (clientX) => {
+        isDown = true;
+        moved = false;
+        startX = clientX;
+        startScroll = el.scrollLeft;
+        el.classList.add('dragging');
+      };
+      const move = (clientX, e) => {
+        if (!isDown) return;
+        const dx = clientX - startX;
+        if (Math.abs(dx) > 3) moved = true;
+        if (e && moved) e.preventDefault();
+        el.scrollLeft = startScroll - dx;
+      };
+      const end = () => {
+        isDown = false;
+        el.classList.remove('dragging');
+      };
+      el.addEventListener('mousedown', (e) => start(e.clientX));
+      window.addEventListener('mousemove', (e) => move(e.clientX, e));
+      window.addEventListener('mouseup', end);
+      el.addEventListener('mouseleave', () => { if (isDown) end(); });
+      el.addEventListener('touchstart', (e) => start(e.touches[0].clientX), { passive: true });
+      el.addEventListener('touchmove', (e) => move(e.touches[0].clientX, e), { passive: false });
+      el.addEventListener('touchend', end);
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  })();
+</script>
