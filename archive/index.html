@@ -60,6 +60,7 @@
       decelPower: 3,               // ease exponent (1=linear, 2=quad, 3=cubic, 4=quart)
       designSpeedDivisor: 4,       // designSpeed = closeThreshold / (linger × this)
       travelAimRate: 2.5,          // aim slerp rate during travel phase
+      lockAimAt: 2.0,              // lock aim once centreDist < closeThreshold × this (no sweep while body visible)
       lingerViewFrac: 0.45,        // % of linger spent viewing current body before turning toward next
       lingerAimBase: 0.45,         // aim slerp during the viewing half (slow — body stays put)
       lingerAimBlendBonus: 2.5,    // aim slerp grows by this × blend during the transition half
@@ -423,6 +424,7 @@
       { key: 'decelPower',          label: 'decel curve',   min: 1,   max: 6,   step: 0.1 },
       { key: 'designSpeedDivisor',  label: 'drift slowness',min: 1,   max: 12,  step: 0.5 },
       { key: 'travelAimRate',       label: 'travel aim',    min: 0.3, max: 6,   step: 0.1 },
+      { key: 'lockAimAt',           label: 'lock aim at',   min: 0.5, max: 5,   step: 0.1 },
       { key: 'lingerViewFrac',      label: 'view fraction', min: 0,   max: 0.9, step: 0.05 },
       { key: 'lingerAimBase',       label: 'linger aim 0',  min: 0,   max: 5,   step: 0.1 },
       { key: 'lingerAimBlendBonus', label: 'linger aim +',  min: 0,   max: 5,   step: 0.1 },
@@ -1312,7 +1314,17 @@
 
             if (autopilotPhase === 'traveling') {
               const baseSpeed = decelSpeed(dist, designSpeed, closeThreshold);
-              [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, autoCfg.travelAimRate);
+              // Once we're close enough that the body fills the frame, LOCK the
+              // direction — no more chasing the aim point with rotation as it
+              // sweeps past our peripheral. User: "once the body is in view
+              // there shouldn't be a need to rotate".
+              if (centreDist < closeThreshold * autoCfg.lockAimAt) {
+                tvx = fx * baseSpeed;
+                tvy = fy * baseSpeed;
+                tvz = fz * baseSpeed;
+              } else {
+                [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, autoCfg.travelAimRate);
+              }
             } else if (nextAutopilotTarget) {
               // Linger: split into two halves.
               //   - First `viewFrac` of the window: hold on the CURRENT body,
