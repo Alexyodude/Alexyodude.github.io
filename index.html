@@ -1045,35 +1045,40 @@
             autopilotPhase = 'traveling';
           }
           if (autopilotTarget && dist > 1) {
-            // Aim camera at the target — interpolate yaw/pitch
-            const aimYaw = Math.atan2(dx, dz);
-            const aimPitch = -Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
-            let dYaw = aimYaw - yaw;
-            while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
-            while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
-            const aimLerp = Math.min(1, dt * 2.5);
-            yaw   += dYaw * aimLerp;
-            pitch += (aimPitch - pitch) * aimLerp;
-            // Speed depends on phase
+            // Speed scales with distance so we don't overshoot in a single frame.
+            // Caps at the warp ceiling (1e18 m/s) for genuinely far targets.
             let targetSpeed;
             if (autopilotPhase === 'traveling') {
-              // Cruise at the warp ceiling, easing down only as we close in.
-              // Once within 5×close-threshold, scale linearly with remaining
-              // distance so we don't overshoot the POI.
-              const easeStart = closeThreshold * 5;
-              if (dist > easeStart) {
-                targetSpeed = 1e18; // top warp
-              } else {
-                targetSpeed = Math.max(targetRadius * 8, 1e18 * (dist / easeStart));
-              }
+              targetSpeed = Math.min(1e18, dist * 1.5);
             } else {
-              // Lingering: gentle coast past the object so it stays in view
-              targetSpeed = targetRadius * 6;
+              // Lingering: coast forward past the object, in the direction we
+              // were already heading — don't keep re-aiming as we pass behind.
+              const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+              targetSpeed = Math.max(targetRadius * 4, Math.min(vMag, targetRadius * 8));
+            }
+            // Only aim during travel — locking the direction in linger prevents
+            // the spinning oscillation when the camera passes the object.
+            if (autopilotPhase === 'traveling') {
+              const aimYaw = Math.atan2(dx, dz);
+              const aimPitch = -Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
+              let dYaw = aimYaw - yaw;
+              while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
+              while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
+              const aimLerp = Math.min(1, dt * 2.5);
+              yaw   += dYaw * aimLerp;
+              pitch += (aimPitch - pitch) * aimLerp;
             }
             const nx = dx / dist, ny = dy / dist, nz = dz / dist;
-            tvx = nx * targetSpeed;
-            tvy = ny * targetSpeed;
-            tvz = nz * targetSpeed;
+            if (autopilotPhase === 'traveling') {
+              tvx = nx * targetSpeed;
+              tvy = ny * targetSpeed;
+              tvz = nz * targetSpeed;
+            } else {
+              // Linger: keep velocity along the camera's current forward axis
+              tvx = fx * targetSpeed;
+              tvy = fy * targetSpeed;
+              tvz = fz * targetSpeed;
+            }
           }
         }
       }
@@ -1115,7 +1120,7 @@
       }
       // Smooth current velocity toward target. Faster response during autopilot
       // so warp ramp doesn't eat half the trip; gentler for manual feel otherwise.
-      const lerpV = Math.min(1, dt * (autopilotActive ? 10 : 3.5));
+      const lerpV = Math.min(1, dt * (autopilotActive ? 6 : 3.5));
       velocity[0] += (tvx - velocity[0]) * lerpV;
       velocity[1] += (tvy - velocity[1]) * lerpV;
       velocity[2] += (tvz - velocity[2]) * lerpV;
