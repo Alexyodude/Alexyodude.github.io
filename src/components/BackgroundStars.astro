@@ -1432,35 +1432,13 @@
       let autopilotActive = false;
       if (autopilot) {
         function computeFlyByOffset(target, outOffset) {
-          // Perpendicular offset from camera→target vector so we fly past on the side.
-          const rdir = mulberry32(objHash(target) ^ 0xF1B7);
-          const dx0 = target.wx - cam[0];
-          const dy0 = target.wy - cam[1];
-          const dz0 = target.wz - cam[2];
-          const dn = Math.sqrt(dx0 * dx0 + dy0 * dy0 + dz0 * dz0) || 1;
-          const tnx = dx0 / dn, tny = dy0 / dn, tnz = dz0 / dn;
-          let ox, oy, oz, om = 0;
-          // Try a few random vectors; retry if the projection degenerates to ~0
-          // (random happened to align with the travel direction).
-          for (let attempt = 0; attempt < 6; attempt++) {
-            ox = rdir() - 0.5; oy = rdir() - 0.5; oz = rdir() - 0.5;
-            const dot = ox * tnx + oy * tny + oz * tnz;
-            ox -= dot * tnx; oy -= dot * tny; oz -= dot * tnz;
-            om = Math.sqrt(ox * ox + oy * oy + oz * oz);
-            if (om > 0.15) break;
-          }
-          // Deterministic fallback if all attempts degenerated.
-          if (om <= 0.15) {
-            if (Math.abs(tnx) < 0.9) { ox = 0;        oy = -tnz;     oz = tny; }
-            else                     { ox = -tny;     oy = tnx;      oz = 0;   }
-            om = Math.sqrt(ox * ox + oy * oy + oz * oz) || 1;
-          }
-          // Bigger fly-by clearance (was 5–11×, now 12–22×) so we actually
-          // pass to the side rather than skimming the surface.
-          const flyByDist = (target.physRadius || 1e9) * (12 + rdir() * 10);
-          outOffset[0] = (ox / om) * flyByDist;
-          outOffset[1] = (oy / om) * flyByDist;
-          outOffset[2] = (oz / om) * flyByDist;
+          // No offset — aim straight at the body centre. Travel decelerates so
+          // we stop at the approach distance, no fly-by needed. This keeps the
+          // body centred during approach (no apparent rotation of the body
+          // across the screen as we close in).
+          outOffset[0] = 0;
+          outOffset[1] = 0;
+          outOffset[2] = 0;
         }
         function snapAimToCurrentTarget() {
           if (!autopilotTarget) return;
@@ -1512,6 +1490,9 @@
             autopilotPhase = 'lingering';
             autopilotLingerStart = tAnimSec;
             prepareNextTarget(); // queue the next POI so handoff is smooth
+            // Snap velocity to zero so we hold position dead-still during linger
+            // — no drift past, no parallax of the body across the screen.
+            velocity[0] = 0; velocity[1] = 0; velocity[2] = 0;
           }
           if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > autoCfg.linger) {
             // Smooth handoff: promote pre-acquired next target to current.
@@ -1591,14 +1572,12 @@
                 [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, autoCfg.travelAimRate);
               }
             } else {
-              // Linger: pure locked-direction drift. No rotation, no velocity
-              // re-direction. Body sits in view, camera doesn't move. At
-              // linger end the target swaps and travel handles getting to the
-              // next body — and since the POI picker only allows ≤90° next
-              // targets, the worst-case travel-phase rotation is bounded.
-              tvx = fx * designSpeed;
-              tvy = fy * designSpeed;
-              tvz = fz * designSpeed;
+              // Linger: hold position dead-still. Zero target velocity, no
+              // rotation. Body sits perfectly centred in view for the full
+              // linger window. At linger end we snap aim+velocity to next.
+              tvx = 0;
+              tvy = 0;
+              tvz = 0;
             }
           }
         }
