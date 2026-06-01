@@ -1055,11 +1055,18 @@
             // Speed depends on phase
             let targetSpeed;
             if (autopilotPhase === 'traveling') {
-              // Ease in: try to close the distance in ~3 seconds, slowing as we approach
-              targetSpeed = Math.min(dist / 3, 1e19);
+              // Cruise at the warp ceiling, easing down only as we close in.
+              // Once within 5×close-threshold, scale linearly with remaining
+              // distance so we don't overshoot the POI.
+              const easeStart = closeThreshold * 5;
+              if (dist > easeStart) {
+                targetSpeed = 1e18; // top warp
+              } else {
+                targetSpeed = Math.max(targetRadius * 8, 1e18 * (dist / easeStart));
+              }
             } else {
-              // Lingering: maintain modest forward speed so we drift past the object
-              targetSpeed = Math.min(dist + targetRadius * 4, targetRadius * 6);
+              // Lingering: gentle coast past the object so it stays in view
+              targetSpeed = targetRadius * 6;
             }
             const nx = dx / dist, ny = dy / dist, nz = dz / dist;
             tvx = nx * targetSpeed;
@@ -1104,8 +1111,9 @@
         if (keys.has('q') || keys.has(' ')) { tvx += ux * speed; tvy += uy * speed; tvz += uz * speed; }
         if (keys.has('e')) { tvx -= ux * speed; tvy -= uy * speed; tvz -= uz * speed; }
       }
-      // Smooth current velocity toward target (inertia / damping). Time constant ≈ 0.3 s.
-      const lerpV = Math.min(1, dt * 3.5);
+      // Smooth current velocity toward target. Faster response during autopilot
+      // so warp ramp doesn't eat half the trip; gentler for manual feel otherwise.
+      const lerpV = Math.min(1, dt * (autopilotActive ? 10 : 3.5));
       velocity[0] += (tvx - velocity[0]) * lerpV;
       velocity[1] += (tvy - velocity[1]) * lerpV;
       velocity[2] += (tvz - velocity[2]) * lerpV;
