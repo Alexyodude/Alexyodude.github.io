@@ -1354,15 +1354,14 @@
                 [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, autoCfg.travelAimRate);
               }
             } else if (nextAutopilotTarget) {
-              // Linger: split into two halves.
-              //   - First `viewFrac` of the window: hold on the CURRENT body,
-              //     aim at it gently so the user can take it in without
-              //     constant rotation toward something else.
-              //   - Rest of the window: smoothly transition aim and speed
-              //     toward the NEXT body. By the time linger ends we're
-              //     aimed and warping.
+              // Linger: camera direction is LOCKED throughout — no rotation
+              // while the body is on screen. We do silently blend the velocity
+              // VECTOR toward the next target so by the end of linger the
+              // trajectory already points the right way. The camera catches up
+              // via the travel-phase aim AFTER the current body is behind us.
               const lingerT = Math.min(1, (tAnimSec - autopilotLingerStart) / autoCfg.linger);
-              const viewFrac = autoCfg.lingerViewFrac;
+              const blend = Math.max(0, (lingerT - autoCfg.lingerViewFrac) / Math.max(0.01, 1 - autoCfg.lingerViewFrac));
+              const blendS = Math.min(1, blend) * Math.min(1, blend) * (3 - 2 * Math.min(1, blend));
               const ndx = (nextAutopilotTarget.wx + nextAutopilotOffset[0]) - cam[0];
               const ndy = (nextAutopilotTarget.wy + nextAutopilotOffset[1]) - cam[1];
               const ndz = (nextAutopilotTarget.wz + nextAutopilotOffset[2]) - cam[2];
@@ -1372,21 +1371,16 @@
               const nextThreshold = nextRadius * nextApproachMul;
               const nextDesignSp = nextThreshold / (autoCfg.linger * autoCfg.designSpeedDivisor);
               const nextWarp = decelSpeed(nd, nextDesignSp, nextThreshold);
-              if (lingerT < viewFrac) {
-                // View the current body — direction is LOCKED so the camera
-                // doesn't rotate while the body is on screen. Just coast past
-                // at designSpeed along the heading we entered linger with.
-                tvx = fx * designSpeed;
-                tvy = fy * designSpeed;
-                tvz = fz * designSpeed;
-              } else {
-                // Transition to next target. blend goes 0→1 across the rest of linger.
-                const tt = (lingerT - viewFrac) / (1 - viewFrac);
-                const blend = tt * tt * (3 - 2 * tt);
-                const baseSpeed = designSpeed + (nextWarp - designSpeed) * blend;
-                const aimRate = autoCfg.lingerAimBase + blend * autoCfg.lingerAimBlendBonus;
-                [tvx, tvy, tvz] = aimAndMove(ndx, ndy, ndz, baseSpeed, aimRate);
-              }
+              const baseSpeed = designSpeed + (nextWarp - designSpeed) * blendS;
+              // Blend velocity direction from camera-forward → toward next target.
+              const nnx = ndx / nd, nny = ndy / nd, nnz = ndz / nd;
+              const dirX = fx * (1 - blendS) + nnx * blendS;
+              const dirY = fy * (1 - blendS) + nny * blendS;
+              const dirZ = fz * (1 - blendS) + nnz * blendS;
+              const dirN = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 1;
+              tvx = (dirX / dirN) * baseSpeed;
+              tvy = (dirY / dirN) * baseSpeed;
+              tvz = (dirZ / dirN) * baseSpeed;
             } else {
               // No next target yet — drift forward at design speed.
               tvx = fx * designSpeed;
