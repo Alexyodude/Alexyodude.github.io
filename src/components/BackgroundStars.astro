@@ -263,9 +263,11 @@
       decelPower: 3,               // ease exponent (1=linear, 2=quad, 3=cubic, 4=quart)
       designSpeedDivisor: 4,       // designSpeed = closeThreshold / (linger × this)
       travelAimRate: 2.5,          // aim slerp rate during travel phase
-      lingerAimBase: 1.0,          // aim slerp base during linger (slow start)
-      lingerAimBlendBonus: 2.5,    // aim slerp grows by this × blend
+      lingerViewFrac: 0.45,        // % of linger spent viewing current body before turning toward next
+      lingerAimBase: 0.45,         // aim slerp during the viewing half (slow — body stays put)
+      lingerAimBlendBonus: 2.5,    // aim slerp grows by this × blend during the transition half
       velocityLerp: 4,             // velocity smoothing rate during autopilot
+      maxWarpExp: 20,              // ceiling on autopilot warp speed in m/s = 10^this
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -617,9 +619,11 @@
       { key: 'decelPower',          label: 'decel curve',   min: 1,   max: 6,   step: 0.1 },
       { key: 'designSpeedDivisor',  label: 'drift slowness',min: 1,   max: 12,  step: 0.5 },
       { key: 'travelAimRate',       label: 'travel aim',    min: 0.3, max: 6,   step: 0.1 },
+      { key: 'lingerViewFrac',      label: 'view fraction', min: 0,   max: 0.9, step: 0.05 },
       { key: 'lingerAimBase',       label: 'linger aim 0',  min: 0,   max: 5,   step: 0.1 },
       { key: 'lingerAimBlendBonus', label: 'linger aim +',  min: 0,   max: 5,   step: 0.1 },
       { key: 'velocityLerp',        label: 'vel smoothing', min: 1,   max: 12,  step: 0.5 },
+      { key: 'maxWarpExp',          label: 'max warp 10^',  min: 16,  max: 24,  step: 0.5 },
     ];
     function fmtVal(v) {
       return Number.isInteger(v) ? String(v) : (Math.round(v * 100) / 100).toString();
@@ -1479,7 +1483,7 @@
             // *last* approach (final radius or two) is genuinely slow — you have
             // time to take in the body before drifting past.
             function decelSpeed(d, designSp, threshold) {
-              const warp = Math.min(1e18, d * 1.5);
+              const warp = Math.min(Math.pow(10, autoCfg.maxWarpExp), d * 1.5);
               const corridor = threshold * autoCfg.decelCorridorMul;
               if (d > corridor) return warp;
               const t = Math.max(0, Math.min(1, (d - threshold) / (corridor - threshold)));
@@ -1492,12 +1496,15 @@
               const baseSpeed = decelSpeed(dist, designSpeed, closeThreshold);
               [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, autoCfg.travelAimRate);
             } else if (nextAutopilotTarget) {
-              // Linger: rotation aims at next target THROUGHOUT — gradual at the
-              // start so we drift past current first, then increasingly direct.
-              // Speed ramps from drift→warp toward next target as we rotate, so
-              // by the end of the linger we're already aimed AND warping at it.
+              // Linger: split into two halves.
+              //   - First `viewFrac` of the window: hold on the CURRENT body,
+              //     aim at it gently so the user can take it in without
+              //     constant rotation toward something else.
+              //   - Rest of the window: smoothly transition aim and speed
+              //     toward the NEXT body. By the time linger ends we're
+              //     aimed and warping.
               const lingerT = Math.min(1, (tAnimSec - autopilotLingerStart) / autoCfg.linger);
-              const blend   = lingerT * lingerT * (3 - 2 * lingerT);
+              const viewFrac = autoCfg.lingerViewFrac;
               const ndx = (nextAutopilotTarget.wx + nextAutopilotOffset[0]) - cam[0];
               const ndy = (nextAutopilotTarget.wy + nextAutopilotOffset[1]) - cam[1];
               const ndz = (nextAutopilotTarget.wz + nextAutopilotOffset[2]) - cam[2];
@@ -1507,9 +1514,17 @@
               const nextThreshold = nextRadius * nextApproachMul;
               const nextDesignSp = nextThreshold / (autoCfg.linger * autoCfg.designSpeedDivisor);
               const nextWarp = decelSpeed(nd, nextDesignSp, nextThreshold);
-              const baseSpeed = designSpeed + (nextWarp - designSpeed) * blend;
-              const aimRate = autoCfg.lingerAimBase + blend * autoCfg.lingerAimBlendBonus;
-              [tvx, tvy, tvz] = aimAndMove(ndx, ndy, ndz, baseSpeed, aimRate);
+              if (lingerT < viewFrac) {
+                // View the current body — aim at it gently, drift past at designSpeed.
+                [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, designSpeed, autoCfg.lingerAimBase);
+              } else {
+                // Transition to next target. blend goes 0→1 across the rest of linger.
+                const tt = (lingerT - viewFrac) / (1 - viewFrac);
+                const blend = tt * tt * (3 - 2 * tt);
+                const baseSpeed = designSpeed + (nextWarp - designSpeed) * blend;
+                const aimRate = autoCfg.lingerAimBase + blend * autoCfg.lingerAimBlendBonus;
+                [tvx, tvy, tvz] = aimAndMove(ndx, ndy, ndz, baseSpeed, aimRate);
+              }
             } else {
               // No next target yet — drift forward at design speed.
               tvx = fx * designSpeed;
@@ -1531,10 +1546,10 @@
         const isMoving = wHeld || keys.has('a') || keys.has('s') || keys.has('d') ||
                          keys.has('q') || keys.has('e') || keys.has(' ');
         // Always ramp: holding any movement key (or auto-W) exponentially boosts speed.
-        // Reaches ~1e10× over ~5s, capping at ~1e18 m/s (~100 ly/s).
+        // Reaches ~1e12× over ~6s, capping at ~1e20 m/s (~10,000 ly/s).
         if (isMoving) shiftHold += dt;
         else shiftHold = 0;
-        const shiftMul = Math.min(1e10, Math.exp(shiftHold * 4.6));
+        const shiftMul = Math.min(1e12, Math.exp(shiftHold * 4.6));
 
         const proxFactor = lastNearestD === Infinity
           ? 1
