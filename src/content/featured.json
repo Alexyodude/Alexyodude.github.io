@@ -15,10 +15,10 @@
   },
   {
     "title": "artefact(s): LeNet-1",
-    "description": "Browser-based interactive visualization of LeNet-1, the pioneering convolutional neural network. First entry in an in-browser series exploring historical computing artefacts.",
+    "description": "Physical installation translating LeNet-1 — the first convolutional neural network (Bell Labs, 1989) — from matrices to copper and from scalar activations to brightness. 1.63m frame of transparent flex PCBs, WS2812B LEDs, low-iron glass, Raspberry Pi 4. A handwritten digit is fed in every 10 seconds and propagated layer by layer through the physical network. Co-built with Nick Oh as socius labs.",
     "repo": "https://socius-org.github.io/artefacts/",
-    "demo": null,
-    "tags": ["Visualization", "Neural Networks", "JavaScript"]
+    "demo": "http://alexyodude.com/LENET-1_Physical/",
+    "tags": ["Installation", "Hardware", "Neural Networks", "PCB"]
   },
   {
     "title": "Oikolex",
