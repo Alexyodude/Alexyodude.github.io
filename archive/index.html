@@ -73,7 +73,8 @@
       maxAngleChange: 0.524,       // 30° — picker only accepts POIs within this forward cone
       aimAngularVel: 1.5,          // rad/sec angular velocity of the smooth aim (constant rate, not exponential)
       steerRate: 2.0,              // velocity-vector steering rate — fraction of baseSpeed added toward target per second before renormalisation
-      accelRate: 0.8,              // exponential rate at which actual |v| eases toward the target magnitude (gradual increase/decrease at each POI)
+      accelRateUp: 3.5,            // exponential rate when |v| is RISING toward baseSpeed (fast ramp-up after a POI)
+      accelRateDown: 0.35,         // exponential rate when |v| is FALLING toward baseSpeed (gradual slowdown well before reaching the POI)
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -1417,9 +1418,11 @@
               const newVx = velocity[0] + tdx * addMag;
               const newVy = velocity[1] + tdy * addMag;
               const newVz = velocity[2] + tdz * addMag;
-              // Smoothed magnitude target — current |v| eases toward baseSpeed.
+              // Asymmetric ease toward baseSpeed: ramp up FAST after handoff,
+              // ramp down SLOWLY (start slowing well before reaching the POI).
               const currentMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
-              const accelLerp = Math.min(1, dt * autoCfg.accelRate);
+              const rate = (currentMag < baseSpeed) ? autoCfg.accelRateUp : autoCfg.accelRateDown;
+              const accelLerp = Math.min(1, dt * rate);
               const smoothedMag = currentMag + (baseSpeed - currentMag) * accelLerp;
               const newMag = Math.sqrt(newVx * newVx + newVy * newVy + newVz * newVz);
               if (newMag > 1e-9) {
