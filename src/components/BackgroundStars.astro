@@ -26,7 +26,7 @@
     <button type="button" id="coord-random">⤳ Random</button>
     <button type="button" id="coord-pause">⏸ Pause</button>
     <button type="button" id="coord-autopilot">✦ Autopilot</button>
-    <button type="button" id="coord-debug">🐞 Debug</button>
+    <button type="button" id="coord-debug" hidden>🐞 Debug</button>
   </div>
   <div class="coord-actions">
     <span class="coord-help" style="margin:0">visit</span>
@@ -602,9 +602,16 @@
     refreshAutopilotButton();
 
     // ===== Debug panel for autopilot tuning =====
+    // Only available when the URL has ?debug — keeps the panel out of the way
+    // for normal visitors. Press backtick (`) once enabled to toggle it.
+    const debugEnabled = (() => {
+      try { return new URLSearchParams(location.search).has('debug'); }
+      catch (e) { return false; }
+    })();
     const debugPanel = document.getElementById('debug-panel');
     const debugRowsEl = document.getElementById('debug-rows');
     const btnDebug = document.getElementById('coord-debug');
+    if (debugEnabled && btnDebug) btnDebug.hidden = false;
     const btnDebugClose = document.getElementById('debug-close');
     const btnDebugReset = document.getElementById('debug-reset');
     const btnDebugCopy = document.getElementById('debug-copy');
@@ -1400,11 +1407,25 @@
           const dz0 = target.wz - cam[2];
           const dn = Math.sqrt(dx0 * dx0 + dy0 * dy0 + dz0 * dz0) || 1;
           const tnx = dx0 / dn, tny = dy0 / dn, tnz = dz0 / dn;
-          let ox = rdir() - 0.5, oy = rdir() - 0.5, oz = rdir() - 0.5;
-          const dot = ox * tnx + oy * tny + oz * tnz;
-          ox -= dot * tnx; oy -= dot * tny; oz -= dot * tnz;
-          const om = Math.sqrt(ox * ox + oy * oy + oz * oz) || 1;
-          const flyByDist = (target.physRadius || 1e9) * (5 + rdir() * 6);
+          let ox, oy, oz, om = 0;
+          // Try a few random vectors; retry if the projection degenerates to ~0
+          // (random happened to align with the travel direction).
+          for (let attempt = 0; attempt < 6; attempt++) {
+            ox = rdir() - 0.5; oy = rdir() - 0.5; oz = rdir() - 0.5;
+            const dot = ox * tnx + oy * tny + oz * tnz;
+            ox -= dot * tnx; oy -= dot * tny; oz -= dot * tnz;
+            om = Math.sqrt(ox * ox + oy * oy + oz * oz);
+            if (om > 0.15) break;
+          }
+          // Deterministic fallback if all attempts degenerated.
+          if (om <= 0.15) {
+            if (Math.abs(tnx) < 0.9) { ox = 0;        oy = -tnz;     oz = tny; }
+            else                     { ox = -tny;     oy = tnx;      oz = 0;   }
+            om = Math.sqrt(ox * ox + oy * oy + oz * oz) || 1;
+          }
+          // Bigger fly-by clearance (was 5–11×, now 12–22×) so we actually
+          // pass to the side rather than skimming the surface.
+          const flyByDist = (target.physRadius || 1e9) * (12 + rdir() * 10);
           outOffset[0] = (ox / om) * flyByDist;
           outOffset[1] = (oy / om) * flyByDist;
           outOffset[2] = (oz / om) * flyByDist;
@@ -1515,8 +1536,12 @@
               const nextDesignSp = nextThreshold / (autoCfg.linger * autoCfg.designSpeedDivisor);
               const nextWarp = decelSpeed(nd, nextDesignSp, nextThreshold);
               if (lingerT < viewFrac) {
-                // View the current body — aim at it gently, drift past at designSpeed.
-                [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, designSpeed, autoCfg.lingerAimBase);
+                // View the current body — direction is LOCKED so the camera
+                // doesn't rotate while the body is on screen. Just coast past
+                // at designSpeed along the heading we entered linger with.
+                tvx = fx * designSpeed;
+                tvy = fy * designSpeed;
+                tvz = fz * designSpeed;
               } else {
                 // Transition to next target. blend goes 0→1 across the rest of linger.
                 const tt = (lingerT - viewFrac) / (1 - viewFrac);

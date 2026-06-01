@@ -120,7 +120,7 @@ const entries = (timeline as Entry[]).slice().reverse();
     box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 70%, transparent);
     pointer-events: none;
     z-index: 3;
-    animation: timelineProgress 14s ease-in-out infinite;
+    animation: timelineProgress 8s ease-out 1 forwards;
   }
   .timeline-pulse {
     position: absolute;
@@ -138,19 +138,15 @@ const entries = (timeline as Entry[]).slice().reverse();
       0 0 30px color-mix(in srgb, var(--color-accent) 40%, transparent);
     pointer-events: none;
     z-index: 4;
-    animation: timelineMove 14s ease-in-out infinite, timelinePulse 1.4s ease-in-out infinite;
+    animation: timelineMove 8s ease-out 1 forwards, timelinePulse 1.4s ease-in-out infinite;
   }
   @keyframes timelineMove {
     0%   { left: 72px; }
-    80%  { left: calc(100% - 72px); }
-    90%  { left: calc(100% - 72px); }
-    100% { left: 72px; opacity: 0; }
+    100% { left: calc(100% - 72px); }
   }
   @keyframes timelineProgress {
     0%   { width: 0; }
-    80%  { width: calc(100% - 144px); }
-    90%  { width: calc(100% - 144px); }
-    100% { width: 0; opacity: 0; }
+    100% { width: calc(100% - 144px); }
   }
   @keyframes timelinePulse {
     0%, 100% { opacity: 0.55; transform: scale(1); }
