@@ -1469,6 +1469,16 @@
           const sdz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
           yaw = Math.atan2(sdx, sdz);
           pitch = -Math.atan2(sdy, Math.sqrt(sdx * sdx + sdz * sdz));
+          // Snap velocity to align with the new heading too — otherwise the
+          // velocity vector lerps from the old direction over ~0.25s and the
+          // camera slides sideways while facing forward (reads as rotation).
+          const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+          if (vMag > 0) {
+            const sn = Math.sqrt(sdx * sdx + sdy * sdy + sdz * sdz) || 1;
+            velocity[0] = (sdx / sn) * vMag;
+            velocity[1] = (sdy / sn) * vMag;
+            velocity[2] = (sdz / sn) * vMag;
+          }
         }
         function acquireNewTarget() {
           autopilotTarget = findNextAutopilotPOI();
