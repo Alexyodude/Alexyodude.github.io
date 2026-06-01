@@ -272,9 +272,9 @@
       lingerAimBlendBonus: 0.0,    // unused while linger is rotation-locked
       velocityLerp: 4,             // velocity smoothing rate during autopilot
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this
-      maxRotateSec: 6.0,           // soft cap: travel rotation finishes inside this many seconds
-      maxAngleChange: 0.8,         // ~46° — picker only accepts targets within this many radians of forward
-      aimAngularVel: 0.9,          // rad/sec angular velocity of the smooth aim (constant rate, not exponential)
+      maxRotateSec: 30,            // very loose cap (effectively off) — let rotation complete
+      maxAngleChange: 1.2,         // ~69° — picker accepts most candidates so it always finds one
+      aimAngularVel: 1.5,          // rad/sec angular velocity of the smooth aim (constant rate, not exponential)
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -1541,6 +1541,11 @@
               }
             }
           }
+          // Guard against the picker failing to find a target — skip the
+          // travel physics this frame instead of crashing on a null target.
+          if (!autopilotTarget) {
+            tvx = 0; tvy = 0; tvz = 0;
+          } else {
           // Now compute physics quantities against the (possibly new) target.
           const dx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
           const dy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
@@ -1634,6 +1639,7 @@
               tvz = 0;
             }
           }
+          } // end of "else (autopilotTarget exists after handoff)"
         }
       }
       if (!autopilotActive && drifting) {
@@ -1784,10 +1790,10 @@
 
         if (_item.type === 'star') {
           const angRad = obj.physRadius / 1e15 * proj.k;
-          if (angRad > 3) {
+          if (angRad > 0.3) {
             const tex = getStarTexture(obj);
             ctx.drawImage(tex, proj.px - angRad, proj.py - angRad, angRad * 2, angRad * 2);
-            if (angRad > 10) {
+            if (angRad > 1) {
               const rng = mulberry32(objHash(obj) ^ 0xF1A4E5);
               const rotPeriod = 8 + rng() * 18;
               const rotPhase = tAnim * (2 * Math.PI / rotPeriod);
@@ -1838,7 +1844,7 @@
             halo.addColorStop(1, `rgba(${obj.cr},${obj.cg},${obj.cb},0)`);
             ctx.fillStyle = halo;
             ctx.beginPath(); ctx.arc(proj.px, proj.py, angRad * 3.5 * haloPulse, 0, Math.PI * 2); ctx.fill();
-          } else if (angRad > 1) {
+          } else if (angRad > 0.1) {
             const disc = ctx.createRadialGradient(proj.px, proj.py, 0, proj.px, proj.py, angRad);
             disc.addColorStop(0,   `rgba(${Math.min(255, obj.cr + 60)},${Math.min(255, obj.cg + 60)},${Math.min(255, obj.cb + 60)},1)`);
             disc.addColorStop(0.85, `rgba(${obj.cr},${obj.cg},${obj.cb},0.95)`);
@@ -1875,10 +1881,10 @@
 
         } else if (_item.type === 'planet') {
           const rad = obj.physRadius / 1e15 * proj.k;
-          if (rad < 0.4) {
+          if (rad < 0.04) {
             const dotA = Math.max(0.25, 0.6 * depth);
             drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, dotA, Math.max(0.7, rad * 4));
-          } else if (rad < 3) {
+          } else if (rad < 0.3) {
             const visAlpha = Math.min(1, 0.4 + depth);
             const grad = ctx.createRadialGradient(proj.px - rad * 0.35, proj.py - rad * 0.35, 0, proj.px, proj.py, rad);
             grad.addColorStop(0, `rgba(${Math.min(255, obj.cr + 30)},${Math.min(255, obj.cg + 30)},${Math.min(255, obj.cb + 30)},${visAlpha.toFixed(2)})`);
@@ -1889,7 +1895,7 @@
           } else {
             const tex = getPlanetTexture(obj);
             ctx.drawImage(tex, proj.px - rad, proj.py - rad, rad * 2, rad * 2);
-            if (rad > 25 && (obj.kind === 'ocean' || obj.kind === 'gas_giant' || obj.kind === 'ice_giant' || obj.kind === 'shrouded')) {
+            if (rad > 2.5 && (obj.kind === 'ocean' || obj.kind === 'gas_giant' || obj.kind === 'ice_giant' || obj.kind === 'shrouded')) {
               const ar = Math.min(255, obj.cr + 60);
               const ag = Math.min(255, obj.cg + 60);
               const ab = Math.min(255, obj.cb + 60);
