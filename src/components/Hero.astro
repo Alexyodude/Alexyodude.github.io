@@ -1,11 +1,11 @@
 ---
 const bio = 'Physical theory is our limitation.';
 const socials = [
-  { label: 'GitHub', href: 'https://github.com/Alexyodude' },
-  { label: 'LinkedIn', href: 'https://www.linkedin.com/in/alexyodude/' },
-  { label: 'X', href: 'https://x.com/MrPorkchop720' },
-  { label: 'YouTube', href: 'https://www.youtube.com/@MrPorkchop7200' },
-  { label: 'Email', href: 'mailto:alex@mutual.solutions' },
+  { label: 'GitHub',   href: 'https://github.com/Alexyodude',           icon: '/icons/github.svg' },
+  { label: 'LinkedIn', href: 'https://www.linkedin.com/in/alexyodude/', icon: '/icons/linkedin.svg' },
+  { label: 'X',        href: 'https://x.com/MrPorkchop720',             icon: '/icons/x.svg' },
+  { label: 'YouTube',  href: 'https://www.youtube.com/@MrPorkchop7200', icon: '/icons/youtube.svg' },
+  { label: 'Email',    href: 'mailto:alex@mutual.solutions',            icon: '/icons/email.svg' },
 ];
 ---
 
@@ -14,11 +14,16 @@ const socials = [
     Jihoon Park <span lang="ko">박지훈</span> <span class="text-muted font-normal">(Alex)</span>
   </h1>
   <p class="mt-6 text-xl md:text-2xl text-muted">{bio}</p>
-  <ul class="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+  <ul class="mt-8 flex flex-wrap items-center gap-4">
     {socials.map((s) => (
       <li>
-        <a href={s.href} class="underline decoration-muted underline-offset-4 hover:text-accent hover:decoration-accent">
-          {s.label}
+        <a
+          href={s.href}
+          aria-label={s.label}
+          title={s.label}
+          class="flex h-11 w-11 items-center justify-center rounded-full border border-border text-muted hover:text-accent hover:border-accent transition-colors"
+        >
+          <img src={s.icon} alt="" width="22" height="22" class="opacity-90" style="filter: drop-shadow(0 0 0.5px currentColor);" />
         </a>
       </li>
     ))}

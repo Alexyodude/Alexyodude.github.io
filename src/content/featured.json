@@ -21,10 +21,10 @@
     "tags": ["Visualization", "Neural Networks", "JavaScript"]
   },
   {
-    "title": "Project 4",
-    "description": "Placeholder description for the fourth featured project.",
-    "repo": "https://github.com/Alexyodude",
+    "title": "Oikolex (Rate)",
+    "description": "Flutter mobile app for tenant reviews of rental properties — map-based exploration with markers and heatmap, review submission, admin feedback panel. Firebase backend (auth, realtime DB, cloud functions). Codebase lives in the private rate repo.",
+    "repo": "https://oikolex.com",
     "demo": null,
-    "tags": ["C++"]
+    "tags": ["Flutter", "Firebase", "Mobile", "Maps"]
   }
 ]
