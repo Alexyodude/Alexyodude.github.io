@@ -26,6 +26,7 @@
     <button type="button" id="coord-random">⤳ Random</button>
     <button type="button" id="coord-pause">⏸ Pause</button>
     <button type="button" id="coord-autopilot">✦ Autopilot</button>
+    <button type="button" id="coord-debug">🐞 Debug</button>
   </div>
   <div class="coord-actions">
     <span class="coord-help" style="margin:0">visit</span>
@@ -35,6 +36,21 @@
     <button type="button" class="coord-visit" data-type="blackhole">black hole</button>
   </div>
   <div class="coord-help">WASD warp (hold = ramp) · Q/E up/down · right-click drag to look · two-finger drag + pinch on touch</div>
+</aside>
+
+<aside id="debug-panel" class="hidden" aria-hidden="true">
+  <div class="debug-title">AUTOPILOT TUNING</div>
+  <div class="debug-rows" id="debug-rows"></div>
+  <div class="debug-curve">
+    <div class="debug-curve-label">DECEL CURVE (warp → drift)</div>
+    <canvas id="debug-curve-canvas" width="220" height="80"></canvas>
+  </div>
+  <div class="debug-actions">
+    <button type="button" id="debug-reset">Reset</button>
+    <button type="button" id="debug-copy">Copy config</button>
+    <button type="button" id="debug-close">Close</button>
+  </div>
+  <div class="debug-help">Sliders update live. "Copy config" puts the current values on your clipboard — paste back into <code>autoCfg</code> at the top of the script to make them the new defaults.</div>
 </aside>
 
 <style>
@@ -133,6 +149,67 @@
     color: var(--color-muted);
     font-size: 10px;
   }
+
+  #debug-panel {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 260px;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 12px 14px;
+    border: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-radius: 8px;
+    color: var(--color-fg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    pointer-events: auto;
+  }
+  #debug-panel.hidden { display: none; }
+  .debug-title {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--color-muted);
+    margin-bottom: 8px;
+  }
+  .debug-rows { display: grid; gap: 6px; }
+  .debug-row { display: grid; grid-template-columns: 92px 1fr 44px; align-items: center; gap: 6px; }
+  .debug-row label { color: var(--color-muted); }
+  .debug-row input[type="range"] { width: 100%; accent-color: var(--color-accent); }
+  .debug-row .debug-val { text-align: right; color: var(--color-fg); }
+  .debug-curve { margin-top: 10px; }
+  .debug-curve-label { font-size: 10px; color: var(--color-muted); margin-bottom: 4px; }
+  #debug-curve-canvas {
+    display: block;
+    width: 100%;
+    height: 80px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--color-bg) 95%, transparent);
+  }
+  .debug-actions { margin-top: 10px; display: flex; gap: 4px; flex-wrap: wrap; }
+  .debug-actions button {
+    padding: 4px 8px;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--color-fg);
+    border-radius: 4px;
+    font-size: 10px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .debug-actions button:hover { border-color: var(--color-accent); color: var(--color-accent); }
+  .debug-help { margin-top: 8px; color: var(--color-muted); font-size: 9px; line-height: 1.4; }
+  .debug-help code {
+    font-family: inherit;
+    color: var(--color-fg);
+    background: color-mix(in srgb, var(--color-fg) 8%, transparent);
+    padding: 0 3px;
+    border-radius: 2px;
+  }
 </style>
 
 <script is:inline>
@@ -174,11 +251,28 @@
     const autopilotOffset = [0, 0, 0]; // perpendicular fly-by offset (so we pass on the side)
     const nextAutopilotOffset = [0, 0, 0]; // fly-by offset for the queued next target
     const autopilotVisited = []; // ring buffer of recent target keys to avoid loops
-    const AUTOPILOT_LINGER = 7; // seconds spent near each POI after closing in
-    // Per-type approach distance multiplier (× physRadius). Smaller = closer
-    // fly-by. Reused from the "go to" buttons so the autopilot lands at the
-    // same intimate viewing distance.
-    const AUTOPILOT_APPROACH = { planet: 6, star: 18, blackhole: 50 };
+    // Mutable autopilot tuning — bound to the debug UI sliders below.
+    // Tweak via the debug panel, then click "Copy config" and paste the snippet
+    // back into this object to lock in the new defaults.
+    const autoCfg = {
+      linger: 7,                   // seconds spent near each POI
+      approachPlanet: 6,           // per-type approach distance multiplier (× physRadius)
+      approachStar: 18,
+      approachBlackhole: 50,
+      decelCorridorMul: 4,         // start decel at threshold × this
+      decelPower: 3,               // ease exponent (1=linear, 2=quad, 3=cubic, 4=quart)
+      designSpeedDivisor: 4,       // designSpeed = closeThreshold / (linger × this)
+      travelAimRate: 2.5,          // aim slerp rate during travel phase
+      lingerAimBase: 1.0,          // aim slerp base during linger (slow start)
+      lingerAimBlendBonus: 2.5,    // aim slerp grows by this × blend
+      velocityLerp: 4,             // velocity smoothing rate during autopilot
+    };
+    function autoApproachFor(type) {
+      if (type === 'planet') return autoCfg.approachPlanet;
+      if (type === 'star') return autoCfg.approachStar;
+      if (type === 'blackhole') return autoCfg.approachBlackhole;
+      return 18;
+    }
     const AUTOPILOT_TYPES = ['planet', 'star', 'blackhole'];
     let lastFrameMs = performance.now();
     let lastSavedMs = 0;
@@ -504,6 +598,147 @@
       if (btnPause) btnPause.textContent = '▶ Resume';
     }
     refreshAutopilotButton();
+
+    // ===== Debug panel for autopilot tuning =====
+    const debugPanel = document.getElementById('debug-panel');
+    const debugRowsEl = document.getElementById('debug-rows');
+    const btnDebug = document.getElementById('coord-debug');
+    const btnDebugClose = document.getElementById('debug-close');
+    const btnDebugReset = document.getElementById('debug-reset');
+    const btnDebugCopy = document.getElementById('debug-copy');
+    const debugCanvas = document.getElementById('debug-curve-canvas');
+    const debugDefaults = JSON.parse(JSON.stringify(autoCfg));
+    const debugSpecs = [
+      { key: 'linger',              label: 'linger (s)',    min: 1,   max: 20,  step: 0.5 },
+      { key: 'approachPlanet',      label: 'approach P',    min: 2,   max: 30,  step: 1 },
+      { key: 'approachStar',        label: 'approach S',    min: 4,   max: 80,  step: 1 },
+      { key: 'approachBlackhole',   label: 'approach BH',   min: 5,   max: 200, step: 1 },
+      { key: 'decelCorridorMul',    label: 'decel corridor',min: 1.2, max: 10,  step: 0.1 },
+      { key: 'decelPower',          label: 'decel curve',   min: 1,   max: 6,   step: 0.1 },
+      { key: 'designSpeedDivisor',  label: 'drift slowness',min: 1,   max: 12,  step: 0.5 },
+      { key: 'travelAimRate',       label: 'travel aim',    min: 0.3, max: 6,   step: 0.1 },
+      { key: 'lingerAimBase',       label: 'linger aim 0',  min: 0,   max: 5,   step: 0.1 },
+      { key: 'lingerAimBlendBonus', label: 'linger aim +',  min: 0,   max: 5,   step: 0.1 },
+      { key: 'velocityLerp',        label: 'vel smoothing', min: 1,   max: 12,  step: 0.5 },
+    ];
+    function fmtVal(v) {
+      return Number.isInteger(v) ? String(v) : (Math.round(v * 100) / 100).toString();
+    }
+    function drawDecelCurve() {
+      if (!debugCanvas) return;
+      const ctx2 = debugCanvas.getContext('2d');
+      const W = debugCanvas.width, H = debugCanvas.height;
+      ctx2.clearRect(0, 0, W, H);
+      const cs = getComputedStyle(debugCanvas);
+      const border = cs.getPropertyValue('--color-border').trim() || '#444';
+      const muted  = cs.getPropertyValue('--color-muted').trim()  || '#888';
+      const accent = cs.getPropertyValue('--color-accent').trim() || '#3ea6ff';
+      ctx2.strokeStyle = border;
+      ctx2.lineWidth = 1;
+      ctx2.strokeRect(0.5, 0.5, W - 1, H - 1);
+      const padL = 8, padR = 8, padT = 8, padB = 8;
+      const plotW = W - padL - padR;
+      const plotH = H - padT - padB;
+      const corridor = autoCfg.decelCorridorMul;
+      const power = autoCfg.decelPower;
+      ctx2.strokeStyle = muted;
+      ctx2.setLineDash([2, 3]);
+      ctx2.beginPath();
+      ctx2.moveTo(padL, padT + plotH);
+      ctx2.lineTo(padL + plotW, padT + plotH);
+      ctx2.stroke();
+      ctx2.setLineDash([]);
+      ctx2.strokeStyle = accent;
+      ctx2.lineWidth = 1.5;
+      ctx2.beginPath();
+      const SAMPLES = 80;
+      for (let i = 0; i <= SAMPLES; i++) {
+        const u = i / SAMPLES;
+        const ease = Math.pow(u, power);
+        const x = padL + u * plotW;
+        const y = padT + plotH * (1 - ease);
+        if (i === 0) ctx2.moveTo(x, y);
+        else ctx2.lineTo(x, y);
+      }
+      ctx2.stroke();
+      ctx2.fillStyle = muted;
+      ctx2.font = '9px ui-monospace, monospace';
+      ctx2.fillText('threshold', padL + 2, padT + plotH - 2);
+      const rTxt = 'corridor ' + corridor.toFixed(1) + '×';
+      ctx2.fillText(rTxt, padL + plotW - ctx2.measureText(rTxt).width - 2, padT + plotH - 2);
+      ctx2.fillText('warp', padL + 2, padT + 9);
+      ctx2.fillText('drift', padL + plotW - ctx2.measureText('drift').width - 2, padT + 9);
+    }
+    function clearDebugRows() {
+      if (!debugRowsEl) return;
+      while (debugRowsEl.firstChild) debugRowsEl.removeChild(debugRowsEl.firstChild);
+    }
+    function buildDebugRows() {
+      if (!debugRowsEl) return;
+      clearDebugRows();
+      debugSpecs.forEach((spec) => {
+        const row = document.createElement('div');
+        row.className = 'debug-row';
+        const label = document.createElement('label');
+        label.textContent = spec.label;
+        label.setAttribute('for', 'dbg-' + spec.key);
+        const input = document.createElement('input');
+        input.type = 'range';
+        input.id = 'dbg-' + spec.key;
+        input.min = String(spec.min);
+        input.max = String(spec.max);
+        input.step = String(spec.step);
+        input.value = String(autoCfg[spec.key]);
+        const val = document.createElement('span');
+        val.className = 'debug-val';
+        val.textContent = fmtVal(autoCfg[spec.key]);
+        input.addEventListener('input', () => {
+          const v = parseFloat(input.value);
+          autoCfg[spec.key] = v;
+          val.textContent = fmtVal(v);
+          drawDecelCurve();
+        });
+        row.appendChild(label);
+        row.appendChild(input);
+        row.appendChild(val);
+        debugRowsEl.appendChild(row);
+      });
+    }
+    function setDebugOpen(open) {
+      if (!debugPanel) return;
+      debugPanel.classList.toggle('hidden', !open);
+      debugPanel.setAttribute('aria-hidden', open ? 'false' : 'true');
+      if (open) drawDecelCurve();
+    }
+    if (btnDebug) btnDebug.addEventListener('click', () => setDebugOpen(debugPanel.classList.contains('hidden')));
+    if (btnDebugClose) btnDebugClose.addEventListener('click', () => setDebugOpen(false));
+    if (btnDebugReset) btnDebugReset.addEventListener('click', () => {
+      Object.assign(autoCfg, JSON.parse(JSON.stringify(debugDefaults)));
+      buildDebugRows();
+      drawDecelCurve();
+    });
+    if (btnDebugCopy) btnDebugCopy.addEventListener('click', async () => {
+      const snippet = 'const autoCfg = ' + JSON.stringify(autoCfg, null, 2)
+        .replace(/"([a-zA-Z_]+)":/g, '$1:')
+        .replace(/\n/g, '\n      ')
+        + ';';
+      try {
+        await navigator.clipboard.writeText(snippet);
+        btnDebugCopy.textContent = 'Copied!';
+        setTimeout(() => { btnDebugCopy.textContent = 'Copy config'; }, 1400);
+      } catch (e) {
+        const ta = document.createElement('textarea');
+        ta.value = snippet;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); btnDebugCopy.textContent = 'Copied!'; }
+        catch (_) { btnDebugCopy.textContent = 'Copy failed'; }
+        document.body.removeChild(ta);
+        setTimeout(() => { btnDebugCopy.textContent = 'Copy config'; }, 1400);
+      }
+    });
+    buildDebugRows();
+
     document.querySelectorAll('.coord-speed').forEach((b) => {
       b.addEventListener('click', () => {
         const m = parseFloat(b.dataset.mul) || 1;
@@ -1197,14 +1432,14 @@
           const cdz = autopilotTarget.wz - cam[2];
           const centreDist = Math.sqrt(cdx * cdx + cdy * cdy + cdz * cdz);
           const targetRadius = autopilotTarget.physRadius || 1e9;
-          const approachMul = AUTOPILOT_APPROACH[autopilotTarget.type] || 18;
+          const approachMul = autoApproachFor(autopilotTarget.type);
           const closeThreshold = targetRadius * approachMul;
           if (autopilotPhase === 'traveling' && centreDist < closeThreshold) {
             autopilotPhase = 'lingering';
             autopilotLingerStart = tAnimSec;
             prepareNextTarget(); // queue the next POI so handoff is smooth
           }
-          if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > AUTOPILOT_LINGER) {
+          if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > autoCfg.linger) {
             // Smooth handoff: promote pre-acquired next target to current.
             // No re-aiming needed — we've been blending toward it during linger.
             if (nextAutopilotTarget) {
@@ -1245,38 +1480,35 @@
             // time to take in the body before drifting past.
             function decelSpeed(d, designSp, threshold) {
               const warp = Math.min(1e18, d * 1.5);
-              if (d > threshold * 4) return warp;
-              const t = Math.max(0, Math.min(1, (d - threshold) / (threshold * 3)));
-              const ease = t * t * t; // cubic — slows hard near the body
+              const corridor = threshold * autoCfg.decelCorridorMul;
+              if (d > corridor) return warp;
+              const t = Math.max(0, Math.min(1, (d - threshold) / (corridor - threshold)));
+              const ease = Math.pow(t, autoCfg.decelPower);
               return designSp + (warp - designSp) * ease;
             }
-            // Drift speed at the body — quarter the approach distance over the
-            // linger window, so the body stays large in frame for the full time.
-            const designSpeed = closeThreshold / (AUTOPILOT_LINGER * 4);
+            const designSpeed = closeThreshold / (autoCfg.linger * autoCfg.designSpeedDivisor);
 
             if (autopilotPhase === 'traveling') {
               const baseSpeed = decelSpeed(dist, designSpeed, closeThreshold);
-              [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, 2.5);
+              [tvx, tvy, tvz] = aimAndMove(dx, dy, dz, baseSpeed, autoCfg.travelAimRate);
             } else if (nextAutopilotTarget) {
               // Linger: rotation aims at next target THROUGHOUT — gradual at the
               // start so we drift past current first, then increasingly direct.
               // Speed ramps from drift→warp toward next target as we rotate, so
               // by the end of the linger we're already aimed AND warping at it.
-              const lingerT = Math.min(1, (tAnimSec - autopilotLingerStart) / AUTOPILOT_LINGER);
+              const lingerT = Math.min(1, (tAnimSec - autopilotLingerStart) / autoCfg.linger);
               const blend   = lingerT * lingerT * (3 - 2 * lingerT);
               const ndx = (nextAutopilotTarget.wx + nextAutopilotOffset[0]) - cam[0];
               const ndy = (nextAutopilotTarget.wy + nextAutopilotOffset[1]) - cam[1];
               const ndz = (nextAutopilotTarget.wz + nextAutopilotOffset[2]) - cam[2];
               const nd  = Math.sqrt(ndx * ndx + ndy * ndy + ndz * ndz) || 1;
               const nextRadius = nextAutopilotTarget.physRadius || 1e9;
-              const nextApproachMul = AUTOPILOT_APPROACH[nextAutopilotTarget.type] || 18;
+              const nextApproachMul = autoApproachFor(nextAutopilotTarget.type);
               const nextThreshold = nextRadius * nextApproachMul;
-              const nextDesignSp = nextThreshold / (AUTOPILOT_LINGER * 4);
+              const nextDesignSp = nextThreshold / (autoCfg.linger * autoCfg.designSpeedDivisor);
               const nextWarp = decelSpeed(nd, nextDesignSp, nextThreshold);
-              // Speed ramps from current designSpeed (drift) → next warp (closing in).
               const baseSpeed = designSpeed + (nextWarp - designSpeed) * blend;
-              // Aim rate ramps from gentle (drift past) to firm (lock onto next).
-              const aimRate = 1.0 + blend * 2.5;
+              const aimRate = autoCfg.lingerAimBase + blend * autoCfg.lingerAimBlendBonus;
               [tvx, tvy, tvz] = aimAndMove(ndx, ndy, ndz, baseSpeed, aimRate);
             } else {
               // No next target yet — drift forward at design speed.
@@ -1325,7 +1557,7 @@
       }
       // Smooth current velocity toward target. Faster response during autopilot
       // so warp ramp doesn't eat half the trip; gentler for manual feel otherwise.
-      const lerpV = Math.min(1, dt * (autopilotActive ? 4 : 3.5));
+      const lerpV = Math.min(1, dt * (autopilotActive ? autoCfg.velocityLerp : 3.5));
       velocity[0] += (tvx - velocity[0]) * lerpV;
       velocity[1] += (tvy - velocity[1]) * lerpV;
       velocity[2] += (tvz - velocity[2]) * lerpV;
