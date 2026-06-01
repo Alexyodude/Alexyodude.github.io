@@ -697,15 +697,17 @@
       const ccx = Math.floor(cam[0] / CHUNK_SIZE);
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
       const ccz = Math.floor(cam[2] / CHUNK_SIZE);
-      // Reference direction = current velocity (or last known forward if stopped).
-      // Used to prefer candidates that are roughly in front so we don't U-turn.
+      // Reference direction: use velocity if we're moving, otherwise fall back
+      // to the camera's facing direction so the forwardness bias still applies
+      // even when we're stopped (e.g. picking the next POI during linger).
       const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
-      let refX, refY, refZ, haveDir;
+      let refX, refY, refZ, haveDir = true;
       if (vMag > 1) {
         refX = velocity[0] / vMag; refY = velocity[1] / vMag; refZ = velocity[2] / vMag;
-        haveDir = true;
       } else {
-        refX = 0; refY = 0; refZ = 0; haveDir = false;
+        const cp = Math.cos(pitch), sp = Math.sin(pitch);
+        const cy = Math.cos(yaw),   sy = Math.sin(yaw);
+        refX = sy * cp; refY = -sp; refZ = cy * cp;
       }
       // Two-pass: first only accept candidates within 90° of travel direction
       // (forwardness >= 0, hard cap on per-transition rotation). Fall back to
