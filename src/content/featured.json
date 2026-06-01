@@ -21,8 +21,8 @@
     "tags": ["Visualization", "Neural Networks", "JavaScript"]
   },
   {
-    "title": "Oikolex (Rate)",
-    "description": "Flutter mobile app for tenant reviews of rental properties — map-based exploration with markers and heatmap, review submission, admin feedback panel. Firebase backend (auth, realtime DB, cloud functions). Codebase lives in the private rate repo.",
+    "title": "Oikolex",
+    "description": "Flutter mobile app for tenant reviews of rental properties — map-based exploration with markers and heatmap, review submission, admin feedback panel. Firebase backend (auth, realtime DB, cloud functions).",
     "repo": "https://oikolex.com",
     "demo": null,
     "tags": ["Flutter", "Firebase", "Mobile", "Maps"]
