@@ -1261,15 +1261,22 @@
           outOffset[1] = (oy / om) * flyByDist;
           outOffset[2] = (oz / om) * flyByDist;
         }
+        function snapAimToCurrentTarget() {
+          if (!autopilotTarget) return;
+          const sdx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
+          const sdy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
+          const sdz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
+          yaw = Math.atan2(sdx, sdz);
+          pitch = -Math.atan2(sdy, Math.sqrt(sdx * sdx + sdz * sdz));
+        }
         function acquireNewTarget() {
           autopilotTarget = findNextAutopilotPOI();
           autopilotPhase = 'traveling';
           if (!autopilotTarget) return;
           computeFlyByOffset(autopilotTarget, autopilotOffset);
+          snapAimToCurrentTarget();
         }
         function prepareNextTarget() {
-          // Pre-acquire so the linger phase can blend toward the next direction
-          // smoothly instead of snapping when the current target's linger ends.
           if (nextAutopilotTarget) return;
           nextAutopilotTarget = findNextAutopilotPOI();
           if (nextAutopilotTarget) computeFlyByOffset(nextAutopilotTarget, nextAutopilotOffset);
@@ -1305,6 +1312,7 @@
               autopilotOffset[2] = nextAutopilotOffset[2];
               nextAutopilotTarget = null;
               autopilotPhase = 'traveling';
+              snapAimToCurrentTarget(); // snap aim so travel doesn't visibly rotate
             } else {
               acquireNewTarget();
             }
