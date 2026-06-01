@@ -42,11 +42,12 @@
     let smoothBeta = 0; // β smoothed across frames — gives a gradual ramp on Shift warp
     const velocity = [0, 0, 0]; // current world-space velocity (m/s); smoothed toward target for inertia
     let autoW = true; // virtual W held by default until the user presses W themselves
-    let autopilot = false;
+    let autopilot = true; // enabled by default — POI tour kicks off immediately
     let autopilotTarget = null;
-    let autopilotStartT = 0;
+    let autopilotPhase = 'searching'; // 'traveling' | 'lingering' | 'searching'
+    let autopilotLingerStart = 0;
     const autopilotVisited = []; // ring buffer of recent target keys to avoid loops
-    const AUTOPILOT_DURATION = 5; // seconds spent approaching each POI
+    const AUTOPILOT_LINGER = 5; // seconds spent near each POI after closing in
     const AUTOPILOT_TYPES = ['planet', 'star', 'blackhole'];
     let lastFrameMs = performance.now();
     let lastSavedMs = 0;
@@ -347,20 +348,31 @@
       });
     }
     const btnAutopilot = document.getElementById('coord-autopilot');
+    function refreshAutopilotButton() {
+      if (!btnAutopilot) return;
+      btnAutopilot.classList.toggle('coord-speed-active', autopilot);
+      btnAutopilot.textContent = autopilot ? '◉ Autopilot on' : '✦ Autopilot';
+    }
     if (btnAutopilot) {
       btnAutopilot.addEventListener('click', () => {
         autopilot = !autopilot;
-        btnAutopilot.classList.toggle('coord-speed-active', autopilot);
-        btnAutopilot.textContent = autopilot ? '◉ Autopilot on' : '✦ Autopilot';
+        refreshAutopilotButton();
         if (autopilot) {
           autoW = false;
           drifting = false;
           if (btnPause) btnPause.textContent = '▶ Resume';
-          autopilotTarget = findNextAutopilotPOI();
-          autopilotStartT = performance.now() / 1000;
+          autopilotTarget = null;
+          autopilotPhase = 'searching';
         }
       });
     }
+    // Autopilot is enabled by default — kick off the tour immediately
+    if (autopilot) {
+      autoW = false;
+      drifting = false;
+      if (btnPause) btnPause.textContent = '▶ Resume';
+    }
+    refreshAutopilotButton();
     document.querySelectorAll('.coord-speed').forEach((b) => {
       b.addEventListener('click', () => {
         const m = parseFloat(b.dataset.mul) || 1;
@@ -1010,10 +1022,9 @@
       const tAnimSec = nowMs / 1000;
       let autopilotActive = false;
       if (autopilot) {
-        // Pick a new POI every AUTOPILOT_DURATION seconds (or if we lost the target)
-        if (!autopilotTarget || (tAnimSec - autopilotStartT) > AUTOPILOT_DURATION) {
+        if (!autopilotTarget) {
           autopilotTarget = findNextAutopilotPOI();
-          autopilotStartT = tAnimSec;
+          autopilotPhase = 'traveling';
         }
         if (autopilotTarget) {
           autopilotActive = true;
@@ -1021,8 +1032,20 @@
           const dy = autopilotTarget.wy - cam[1];
           const dz = autopilotTarget.wz - cam[2];
           const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          if (dist > 1) {
-            // Aim camera at the target — interpolate yaw/pitch toward it
+          const targetRadius = autopilotTarget.physRadius || 1e9;
+          const closeThreshold = targetRadius * 30;
+          // Transition: travel → linger when we're close enough to actually see it
+          if (autopilotPhase === 'traveling' && dist < closeThreshold) {
+            autopilotPhase = 'lingering';
+            autopilotLingerStart = tAnimSec;
+          }
+          // Transition: linger → next POI after AUTOPILOT_LINGER seconds
+          if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > AUTOPILOT_LINGER) {
+            autopilotTarget = findNextAutopilotPOI();
+            autopilotPhase = 'traveling';
+          }
+          if (autopilotTarget && dist > 1) {
+            // Aim camera at the target — interpolate yaw/pitch
             const aimYaw = Math.atan2(dx, dz);
             const aimPitch = -Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
             let dYaw = aimYaw - yaw;
@@ -1031,10 +1054,15 @@
             const aimLerp = Math.min(1, dt * 2.5);
             yaw   += dYaw * aimLerp;
             pitch += (aimPitch - pitch) * aimLerp;
-            // Speed: aim to reach the POI by 70% of the visit window, then coast past
-            const elapsed = tAnimSec - autopilotStartT;
-            const reachBy = Math.max(0.4, AUTOPILOT_DURATION * 0.65 - elapsed);
-            const targetSpeed = Math.min(dist / reachBy, 1e19);
+            // Speed depends on phase
+            let targetSpeed;
+            if (autopilotPhase === 'traveling') {
+              // Ease in: try to close the distance in ~3 seconds, slowing as we approach
+              targetSpeed = Math.min(dist / 3, 1e19);
+            } else {
+              // Lingering: maintain modest forward speed so we drift past the object
+              targetSpeed = Math.min(dist + targetRadius * 4, targetRadius * 6);
+            }
             const nx = dx / dist, ny = dy / dist, nz = dz / dist;
             tvx = nx * targetSpeed;
             tvy = ny * targetSpeed;
