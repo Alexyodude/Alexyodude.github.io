@@ -1760,6 +1760,10 @@ Grew up between <span class="text-fg" data-astro-cid-v2cbyr3p>Vancouver</span>,
     function init() {
       const el = document.getElementById('timeline-row');
       if (!el) return;
+      // Default to the right end so the most recent entry is visible on load.
+      const scrollToEnd = () => { el.scrollLeft = el.scrollWidth - el.clientWidth; };
+      scrollToEnd();
+      window.addEventListener('load', scrollToEnd);
       let isDown = false;
       let startX = 0;
       let startScroll = 0;
