@@ -47,6 +47,7 @@
     let autopilotLingerStart = 0;
     let autopilotTravelStart = 0; // wall-clock sec when current travel began (for max-rotate-time cap)
     let autopilotOrigDist = 0;    // dist to current target at travel start (used by debug curve marker)
+    let autopilotBrakeStart = -1; // wall-clock sec when camera first crossed into the brake corridor (-1 = not braking yet)
     let autopilotExpectedAccel = 0;    // sec spent in accel band (constant: accelTimeSec)
     let autopilotExpectedCruise = 0;   // sec spent cruising at maxW
     let autopilotExpectedDecel = 0;    // sec spent decelerating across corridor
@@ -1605,6 +1606,7 @@
           autopilotTarget = findNextAutopilotPOI();
           autopilotPhase = 'traveling';
           autopilotTravelStart = tAnimSec;
+          autopilotBrakeStart = -1;
           if (!autopilotTarget) return;
           computeFlyByOffset(autopilotTarget, autopilotOffset);
           const _adx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
@@ -1652,6 +1654,7 @@
                 nextAutopilotTarget = null;
                 autopilotPhase = 'traveling';
                 autopilotTravelStart = tAnimSec;
+                autopilotBrakeStart = -1;
                 const _hdx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
                 const _hdy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
                 const _hdz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
@@ -1729,13 +1732,31 @@
               // This makes the brake long enough to be visible on the timeline
               // instead of vanishing in ~0.1s.
               const corridorAbsLocal = closeThreshold * autoCfg.decelCorridorMul;
-              const remaining = Math.max(dist - closeThreshold, closeThreshold * 0.05);
               const tDecel = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
-              const capFactor = dist < corridorAbsLocal
+              const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
+              const inCorridor = dist < corridorAbsLocal;
+              if (inCorridor && autopilotBrakeStart < 0) autopilotBrakeStart = tAnimSec;
+              const sinceCorridor = autopilotBrakeStart >= 0 ? (tAnimSec - autopilotBrakeStart) : 0;
+              const inDelay = inCorridor && sinceCorridor < decelDelay;
+              const remaining = Math.max(dist - closeThreshold, closeThreshold * 0.05);
+              // Inside corridor + past the delay → log-decay sized to converge
+              //   in decelTimeSec.
+              // Inside corridor during the delay → loose 0.5 factor so cruise
+              //   carries through. The trip estimate already accounts for the
+              //   extra delay time.
+              // Outside corridor → loose 0.5 factor (long cruise leg).
+              const capFactor = (inCorridor && !inDelay)
                 ? (1 - Math.exp(-3 * dt / tDecel))
                 : 0.5;
               const stableCap = remaining * capFactor / Math.max(dt, 1e-6);
-              const baseSpeed = Math.min(decelSpeed(dist, designSpeed, closeThreshold), Math.pow(10, autoCfg.maxWarpExp), stableCap);
+              // During the delay window, ignore decelSpeed's brake easing — we
+              // want to keep cruising at warp. stableCap above is loose enough
+              // to allow it without overshoot (corridor entry is still far
+              //   enough that 0.5×remaining/dt > maxW).
+              const decelFloor = inDelay
+                ? Math.pow(10, autoCfg.maxWarpExp)
+                : decelSpeed(dist, designSpeed, closeThreshold);
+              const baseSpeed = Math.min(decelFloor, Math.pow(10, autoCfg.maxWarpExp), stableCap);
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
               const tdx = dx / dn, tdy = dy / dn, tdz = dz / dn;
               // Speed-up curve: ease velocity from designSpeed up to baseSpeed
