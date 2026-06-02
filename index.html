@@ -668,6 +668,70 @@
     makeDraggable(debugPanel);
     makeDraggable(deepPanel);
     makeDraggable(debugPlotPanel);
+    // Drag-on-curve: dragging vertically inside the accel band reshapes
+    // accelPower; inside the decel band reshapes decelPower. Y position is
+    // mapped to a target velocity; solve for the power that makes the curve
+    // pass through that point.
+    function updateSlider(key) {
+      const inp = document.getElementById('dbg-' + key);
+      if (!inp) return;
+      inp.value = String(autoCfg[key]);
+      const val = inp.parentElement && inp.parentElement.querySelector('.debug-val');
+      if (val) val.textContent = (Math.round(autoCfg[key] * 100) / 100).toString();
+    }
+    if (debugCanvas) {
+      let dragMode = null;
+      debugCanvas.addEventListener('pointerdown', (e) => {
+        const r = debugCanvas.getBoundingClientRect();
+        const u = (e.clientX - r.left) / r.width;
+        // A and B in the curve fn are dynamic — compute them the same way
+        // drawDecelCurve does.
+        const total = autopilotExpectedDuration || 1;
+        const A = Math.max(0.02, Math.min(0.98, autopilotExpectedAccel / total));
+        const B = Math.max(A + 0.02, Math.min(0.98, (autopilotExpectedAccel + autopilotExpectedCruise) / total));
+        if (u < A) dragMode = 'accel';
+        else if (u > B) dragMode = 'decel';
+        else return;
+        debugCanvas.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      });
+      debugCanvas.addEventListener('pointermove', (e) => {
+        if (!dragMode) return;
+        const r = debugCanvas.getBoundingClientRect();
+        const u = (e.clientX - r.left) / r.width;
+        const y = (e.clientY - r.top) / r.height;
+        const total = autopilotExpectedDuration || 1;
+        const A = Math.max(0.02, Math.min(0.98, autopilotExpectedAccel / total));
+        const B = Math.max(A + 0.02, Math.min(0.98, (autopilotExpectedAccel + autopilotExpectedCruise) / total));
+        const plateau = Math.max(0.05, Math.min(1, autoCfg.warpCurveOffset || 1));
+        // Mouse y in canvas units → normalized velocity (1=top, 0=bottom).
+        const targetV = Math.max(0.01, Math.min(plateau - 0.01, (1 - y) * plateau));
+        const ratio = targetV / plateau;
+        if (dragMode === 'accel') {
+          const t = Math.max(0.01, Math.min(0.99, u / A));
+          // accel curve: v = t^p · plateau ⇒ p = log(ratio) / log(t)
+          const p = Math.log(ratio) / Math.log(t);
+          autoCfg.accelPower = Math.max(1, Math.min(6, p));
+          updateSlider('accelPower');
+        } else {
+          const t = Math.max(0.01, Math.min(0.99, (1 - u) / (1 - B)));
+          // decel curve: v = t^p · plateau ⇒ p = log(ratio) / log(t)
+          const p = Math.log(ratio) / Math.log(t);
+          autoCfg.decelPower = Math.max(1, Math.min(6, p));
+          updateSlider('decelPower');
+        }
+        recomputeTripEstimate();
+        drawDecelCurve();
+      });
+      const stopDrag = (e) => {
+        if (!dragMode) return;
+        dragMode = null;
+        try { debugCanvas.releasePointerCapture(e.pointerId); } catch {}
+      };
+      debugCanvas.addEventListener('pointerup', stopDrag);
+      debugCanvas.addEventListener('pointercancel', stopDrag);
+      debugCanvas.style.cursor = 'ns-resize';
+    }
     const btnDebugClose = document.getElementById('debug-close');
     const btnDebugReset = document.getElementById('debug-reset');
     const btnDebugCopy = document.getElementById('debug-copy');
