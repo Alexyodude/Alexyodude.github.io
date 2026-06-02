@@ -326,7 +326,8 @@
       velocityLerp: 4,             // velocity smoothing rate during autopilot (post-block low-pass)
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this — 1e18 = ~3.3B·c (smoothness guaranteed by multiplicative ramp + stableCap)
       maxAngleChange: 0.524,       // 30° — picker's preferred forward cone (widens on fallback)
-      accelRateUp: 3.5,            // exponential rate when |v| is RISING toward baseSpeed (gentle ramp-up after handoff)
+      accelTimeSec: 1.0,           // seconds to ramp from designSpeed up to baseSpeed at travel start
+      accelPower: 2,               // ramp curve exponent (1=linear, 2=ease-in quad, 3=cubic, 4=quart)
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -826,7 +827,8 @@
       { key: 'velocityLerp',        label: 'vel smoothing', min: 1,    max: 12,  step: 0.5 },
       { key: 'maxWarpExp',          label: 'max warp 10^',  min: 16,   max: 24,  step: 0.5 },
       { key: 'maxAngleChange',      label: 'max Δangle rad',min: 0.05, max: Math.PI, step: 0.05 },
-      { key: 'accelRateUp',         label: 'accel rate',    min: 0.2,  max: 12,  step: 0.1 },
+      { key: 'accelTimeSec',        label: 'accel time (s)',min: 0.1,  max: 6,   step: 0.1 },
+      { key: 'accelPower',          label: 'accel curve',   min: 1,    max: 6,   step: 0.1 },
     ];
     function fmtVal(v) {
       return Number.isInteger(v) ? String(v) : (Math.round(v * 100) / 100).toString();
@@ -847,7 +849,8 @@
       const plotW = W - padL - padR;
       const plotH = H - padT - padB;
       const corridor = autoCfg.decelCorridorMul;
-      const power = autoCfg.decelPower;
+      const dPow = autoCfg.decelPower;
+      const aPow = autoCfg.accelPower;
       ctx2.strokeStyle = muted;
       ctx2.setLineDash([2, 3]);
       ctx2.beginPath();
@@ -855,13 +858,27 @@
       ctx2.lineTo(padL + plotW, padT + plotH);
       ctx2.stroke();
       ctx2.setLineDash([]);
+      const SAMPLES = 80;
+      // Accel curve (orange) — left to right, drift → warp over accelTimeSec.
+      ctx2.strokeStyle = '#f7a23a';
+      ctx2.lineWidth = 1.5;
+      ctx2.beginPath();
+      for (let i = 0; i <= SAMPLES; i++) {
+        const u = i / SAMPLES;
+        const ease = Math.pow(u, aPow);
+        const x = padL + u * plotW;
+        const y = padT + plotH * (1 - ease);
+        if (i === 0) ctx2.moveTo(x, y);
+        else ctx2.lineTo(x, y);
+      }
+      ctx2.stroke();
+      // Decel curve (accent blue) — right to left, warp at corridor → drift at threshold.
       ctx2.strokeStyle = accent;
       ctx2.lineWidth = 1.5;
       ctx2.beginPath();
-      const SAMPLES = 80;
       for (let i = 0; i <= SAMPLES; i++) {
         const u = i / SAMPLES;
-        const ease = Math.pow(u, power);
+        const ease = Math.pow(u, dPow);
         const x = padL + u * plotW;
         const y = padT + plotH * (1 - ease);
         if (i === 0) ctx2.moveTo(x, y);
@@ -875,6 +892,11 @@
       ctx2.fillText(rTxt, padL + plotW - ctx2.measureText(rTxt).width - 2, padT + plotH - 2);
       ctx2.fillText('warp', padL + 2, padT + 9);
       ctx2.fillText('drift', padL + plotW - ctx2.measureText('drift').width - 2, padT + 9);
+      ctx2.fillStyle = '#f7a23a';
+      ctx2.fillText('accel', padL + 2, padT + 20);
+      ctx2.fillStyle = accent;
+      const dTxt = 'decel';
+      ctx2.fillText(dTxt, padL + plotW - ctx2.measureText(dTxt).width - 2, padT + 20);
     }
     function clearDebugRows() {
       if (!debugRowsEl) return;
@@ -1802,13 +1824,16 @@
               const baseSpeed = Math.min(decelSpeed(dist, designSpeed, closeThreshold), Math.pow(10, autoCfg.maxWarpExp), stableCap);
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
               const tdx = dx / dn, tdy = dy / dn, tdz = dz / dn;
-              // Velocity tracks baseSpeed directly. Previous multiplicative
-              // ramp from designSpeed (~1e8 → 1e18) took ~3.5s and 4.6e17 m of
-              // integrated motion, so on typical trips (1e15-1e17 m) velocity
-              // peaked well below maxW. With baseSpeed already bounded by
-              // stableCap, instant assignment is safe — per-frame motion is
-              // capped at 50% of remaining distance.
-              const smoothedMag = baseSpeed;
+              // Speed-up curve: ease velocity from designSpeed up to baseSpeed
+              // over `accelTimeSec` using a power-curve shape (`accelPower`).
+              // baseSpeed is already bounded by stableCap so the ramp never
+              // exceeds safe per-frame motion. At t > accelTimeSec the ramp
+              // is saturated and velocity tracks baseSpeed directly.
+              const accelElapsed = tAnimSec - autopilotTravelStart;
+              const accelU = Math.max(0, Math.min(1, accelElapsed / Math.max(1e-3, autoCfg.accelTimeSec)));
+              const accelEase = Math.pow(accelU, autoCfg.accelPower);
+              const rampedTarget = designSpeed + (baseSpeed - designSpeed) * accelEase;
+              const smoothedMag = Math.min(rampedTarget, baseSpeed);
               velocity[0] = tdx * smoothedMag;
               velocity[1] = tdy * smoothedMag;
               velocity[2] = tdz * smoothedMag;
