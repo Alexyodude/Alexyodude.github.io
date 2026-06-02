@@ -51,6 +51,8 @@
     let autopilotOrigDist = 0;    // dist to current target at travel start (used by debug curve marker)
     let autopilotBrakeStart = -1; // wall-clock sec when camera first crossed into the brake corridor (-1 = not braking yet)
     let autopilotStartVel = 0;    // |v| at travel start — ramp begins from here so trips smoothly connect to the previous arrival
+    const autopilotVelHistory = []; // [{t, v}] samples since travel start, drawn as the actual-velocity overlay on the debug curve
+    const VEL_HISTORY_LIMIT = 1024;
     let autopilotExpectedAccel = 0;    // sec spent in accel band (constant: accelTimeSec)
     let autopilotExpectedCruise = 0;   // sec spent cruising at maxW
     let autopilotExpectedDecel = 0;    // sec spent decelerating across corridor
@@ -786,8 +788,28 @@
       ctx2.fillText('warp', padL + 2, padT + 9);
       ctx2.fillText('drift', padL + 2, padT + plotH - 2);
       ctx2.fillText('start', padL + 2, padT + plotH + 7);
+      ctx2.fillStyle = '#4ade80';
+      ctx2.fillText('actual', padL + 32, padT + 9);
+      ctx2.fillStyle = muted;
       const arrTxt = 'arrive';
       ctx2.fillText(arrTxt, padL + plotW - ctx2.measureText(arrTxt).width - 2, padT + plotH + 7);
+      // Actual velocity overlay (green) — sampled per frame since travel start.
+      if (autopilotVelHistory.length > 1) {
+        const maxAbsHist = Math.pow(10, autoCfg.maxWarpExp);
+        ctx2.strokeStyle = '#4ade80';
+        ctx2.lineWidth = 1.4;
+        ctx2.beginPath();
+        for (let i = 0; i < autopilotVelHistory.length; i++) {
+          const s = autopilotVelHistory[i];
+          const u = Math.max(0, Math.min(1, s.t / total));
+          const vN = Math.max(0, Math.min(1, s.v / maxAbsHist));
+          const x = padL + u * plotW;
+          const y = padT + plotH * (1 - vN);
+          if (i === 0) ctx2.moveTo(x, y);
+          else ctx2.lineTo(x, y);
+        }
+        ctx2.stroke();
+      }
       // Phase tick marks at A (accel→cruise) and B (cruise→decel).
       ctx2.strokeStyle = muted;
       ctx2.setLineDash([2, 4]);
@@ -1665,6 +1687,7 @@
           autopilotTravelStart = tAnimSec;
           autopilotBrakeStart = -1;
           autopilotStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+          autopilotVelHistory.length = 0;
           if (!autopilotTarget) return;
           computeFlyByOffset(autopilotTarget, autopilotOffset);
           const _adx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
@@ -1714,6 +1737,7 @@
                 autopilotTravelStart = tAnimSec;
                 autopilotBrakeStart = -1;
                 autopilotStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+                autopilotVelHistory.length = 0;
                 const _hdx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
                 const _hdy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
                 const _hdz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
@@ -1930,6 +1954,12 @@
       cam[2] += velocity[2] * dt;
       const camV = Math.sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
       lastCamV = camV;
+      // Sample velocity for the debug curve overlay (only while autopilot is
+      // traveling — the overlay is the trip's velocity profile).
+      if (autopilotActive && autopilotPhase === 'traveling') {
+        autopilotVelHistory.push({ t: tAnimSec - autopilotTravelStart, v: camV });
+        if (autopilotVelHistory.length > VEL_HISTORY_LIMIT) autopilotVelHistory.shift();
+      }
 
       // Populate the deep-debug snapshot (the panel polls this at 10Hz).
       if (window.__deepState) {
