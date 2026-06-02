@@ -665,7 +665,7 @@
     }
     makeDraggable(debugPanel);
     makeDraggable(deepPanel);
-    makeDraggable(debugPlotPanel);
+    makeDraggable(document.getElementById('debug-plot-panel'));
     // Drag-on-curve: dragging vertically inside the accel band reshapes
     // accelPower; inside the decel band reshapes decelPower. Y position is
     // mapped to a target velocity; solve for the power that makes the curve
