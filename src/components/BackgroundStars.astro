@@ -1627,14 +1627,25 @@
     }
 
     let tAnimAccum = 0; // accumulated animation time excluding linger pauses
+    let lastNearestBHDist = Infinity; // m, set each frame by the chunk loop
+    let lastNearestBHRs = 0;          // m, Schwarzschild radius of that BH
     function frame(nowMs) {
       const dt = Math.min(0.1, (nowMs - lastFrameMs) / 1000);
       lastFrameMs = nowMs;
       // Freeze body animation time during autopilot linger so the body's
       // surface features (star flares, BH disk, halo pulse) stop animating
       // while we hold position — otherwise it looks like the body is rotating.
+      // Gravitational time dilation near a black hole: dτ/dt = √(1 - rs/r).
+      // Uses the previous frame's nearest-BH measurement (set during the chunk
+      // loop). At r >> rs this factor is ~1; near rs it approaches 0 so body
+      // animations visibly slow as we approach the event horizon.
+      let gravDilation = 1;
+      if (lastNearestBHDist < Infinity && lastNearestBHRs > 0) {
+        const ratio = lastNearestBHRs / Math.max(lastNearestBHRs * 1.001, lastNearestBHDist);
+        gravDilation = Math.sqrt(Math.max(0, 1 - ratio));
+      }
       const isLingerFrozen = autopilot && autopilotPhase === 'lingering';
-      if (!isLingerFrozen) tAnimAccum += dt;
+      if (!isLingerFrozen) tAnimAccum += dt * gravDilation;
       const tAnim = tAnimAccum;
 
       // Camera basis vectors from yaw/pitch (right-handed; +Y is screen-down, +Z is forward).
@@ -1996,6 +2007,9 @@
       const vUz = vMagFrame > 1 ? velocity[2] / vMagFrame : 0;
       const haveVel = vMagFrame > 1;
       let nearestThisFrame = Infinity;
+      // Reset per-frame nearest-BH tracking — populated below by the chunk loop.
+      let nearestBHd2 = Infinity;
+      let nearestBHrs = 0;
       let nearestRThisFrame = 0;
 
       for (let dx = -N_RADIUS; dx <= N_RADIUS; dx++) {
@@ -2014,6 +2028,10 @@
               if (d2 < nearestThisFrame) {
                 nearestThisFrame = d2;
                 nearestRThisFrame = obj.physRadius || 1e6;
+              }
+              if (obj.type === 'blackhole' && d2 < nearestBHd2) {
+                nearestBHd2 = d2;
+                nearestBHrs = obj.physRadius || 1e4;
               }
               if (d2 > renderD2) continue;
               // Relativistic aberration in the VELOCITY frame (not camera frame).
@@ -2196,10 +2214,12 @@
               cr = (dop >> 16) & 0xff;
               cg = (dop >> 8) & 0xff;
               cb = dop & 0xff;
-              // Beaming brightness factor with a floor — redshifted stars dim
-              // proportionally to D³ but never fall below 30% so they remain
-              // visibly red instead of vanishing.
-              const beam = Math.max(0.3, Math.min(8, D * D * D));
+              // Bolometric relativistic beaming: photon energy × bunching × time
+              // × solid-angle scales as D⁴ (proper photon flux per unit observer
+              // time). Floor at 0.3 so redshifted sources remain visibly red,
+              // cap at 16 so blueshifted bodies brighten dramatically but
+              // don't whiteout the entire canvas.
+              const beam = Math.max(0.3, Math.min(16, D * D * D * D));
               a = Math.min(1, a * beam);
             }
             if (dark) {
@@ -2302,6 +2322,8 @@
             }
           }
           ctx.globalCompositeOperation = 'source-over';
+          // Nebulae are diffuse emission sources — they Doppler-shift too.
+          applyDopplerTint(proj.px, proj.py, rad, cosTvel);
 
         } else if (_item.type === 'blackhole') {
           const rEH = Math.min(800, obj.physRadius / 1e15 * proj.k);
@@ -2384,6 +2406,8 @@
 
       lastNearestD = nearestThisFrame === Infinity ? Infinity : Math.sqrt(nearestThisFrame);
       lastNearestR = nearestRThisFrame;
+      lastNearestBHDist = nearestBHd2 === Infinity ? Infinity : Math.sqrt(nearestBHd2);
+      lastNearestBHRs = nearestBHrs;
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
