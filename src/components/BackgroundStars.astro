@@ -400,7 +400,7 @@
       approachStar: 18,
       approachBlackhole: 50,
       decelCorridorMul: 4,         // brake corridor — slowdown only kicks in inside threshold × this
-      decelPower: 3,               // ease exponent (1=linear, 2=quad, 3=cubic, 4=quart)
+      decelPower: 1.4,             // ease exponent (1=linear, 2=quad, 3=cubic) — gentle by default
       designSpeedDivisor: 15,      // designSpeed = closeThreshold / (linger × this)
       velocityLerp: 4,             // velocity smoothing rate during autopilot (post-block low-pass)
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this — 1e18 = ~3.3B·c (smoothness guaranteed by multiplicative ramp + stableCap)
@@ -415,7 +415,7 @@
       arrivalHoldSec: 0,           // hold motionless at arrival for N sec before drifting (a dramatic "we're here" pause)
       arrivalLookAtBody: 0,        // 0..1 — how strongly camera tracks the body during linger (0 = none, 1 = locked)
       arrivalSettleRate: 4,        // exponential rate for lookAtBody yaw/pitch tracking (higher = snappier)
-      decelTimeSec: 0.6,           // target brake duration — stableCap inside corridor is scaled to converge in this time (≥ 0.05s)
+      decelTimeSec: 2.5,           // brake duration in seconds — long by default so arrivals glide rather than slam
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -960,7 +960,7 @@
         { key: 'approachBlackhole',   label: 'approach BH',   min: 5,    max: 200, step: 1 },
         { key: 'decelCorridorMul',    label: 'decel corridor',min: 1.2,  max: 10,  step: 0.1 },
         { key: 'decelPower',          label: 'decel curve',   min: 1,    max: 6,   step: 0.1 },
-        { key: 'decelTimeSec',        label: 'brake time (s)',min: 0.1,  max: 5,   step: 0.1 },
+        { key: 'decelTimeSec',        label: 'brake time (s)',min: 0.2,  max: 15,  step: 0.1 },
         { key: 'decelOffsetSec',      label: 'decel delay (s)',min: 0,   max: 5,   step: 0.1 },
         { key: 'flybyOffset',         label: 'flyby offset×', min: 0,    max: 8,   step: 0.1 },
       ]},
