@@ -1196,20 +1196,6 @@
       const k = focal / (dz / 1e15); // scale so that ~1e15 m maps reasonably
       return { px: cx + dx / 1e15 * k, py: cy + dy / 1e15 * k, k, dz };
     }
-    // Relativistic aberration toward +Z (direction of drift). β capped at 0.999.
-    // Returns transformed [dx', dy', dz', cosTheta_apparent] used for projection
-    // and Doppler color shift.
-    function aberrate(dx, dy, dz, beta) {
-      const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (r <= 0) return [dx, dy, dz, 1];
-      const cosT = dz / r;
-      if (beta < 0.005) return [dx, dy, dz, cosT];
-      const cosTp = (cosT + beta) / (1 + beta * cosT);
-      const sinTp = Math.sqrt(Math.max(0, 1 - cosTp * cosTp));
-      const sinT  = Math.sqrt(Math.max(0, 1 - cosT  * cosT));
-      const scale = sinT > 1e-9 ? sinTp / sinT : 1;
-      return [dx * scale, dy * scale, r * cosTp, cosTp];
-    }
     // Doppler color shift: D > 1 blueshift, D < 1 redshift. Tuned for
     // subtle effects at low β (e.g. D≈1.36 at 0.3c → mild blue tint, not extreme).
     function dopplerColor(r, g, b, D) {
@@ -2067,9 +2053,6 @@
               const ly = -(abX * ux + abY * uy + abZ * uz);
               const aoz = abX * fx + abY * fy + abZ * fz;
               if (aoz <= 1e6) continue;
-              // cosTp here is the LEGACY camera-forward cosine (kept for
-              // dot-star brightness boost where it matters less than Doppler).
-              const cosTp = aoz / Math.sqrt(lx * lx + ly * ly + aoz * aoz);
               const proj = project(lx, ly, aoz);
               if (!proj) continue;
               if (proj.px < -50 || proj.px > W + 50 || proj.py < -50 || proj.py > H + 50) continue;
@@ -2089,11 +2072,11 @@
               // Reuse the velocity-frame cosine computed for aberration.
               const cosTvel = cosTvelLocal;
               if (obj.type === 'star' || obj.type === 'planet') {
-                drawList.push({ type: obj.type, obj, proj, depth, cosTp, cosTvel, sortDepth });
+                drawList.push({ type: obj.type, obj, proj, depth, cosTvel, sortDepth });
               } else if (obj.type === 'nebula') {
-                drawList.push({ type: 'nebula', obj, proj, depth, cosTp, cosTvel, sortDepth });
+                drawList.push({ type: 'nebula', obj, proj, depth, cosTvel, sortDepth });
               } else if (obj.type === 'blackhole') {
-                drawList.push({ type: 'blackhole', obj, proj, depth, cosTp, cosTvel, sortDepth });
+                drawList.push({ type: 'blackhole', obj, proj, depth, cosTvel, sortDepth });
               }
             }
           }
@@ -2104,11 +2087,9 @@
       // render before nearer ones (proper occlusion at all distances).
       // Sort by forward-axis depth (near edge), descending — far first, near last.
       drawList.sort((a, b) => b.sortDepth - a.sortDepth);
-      // Relativistic Doppler colour tint. Uses cosTvel = (line-of-sight · v̂),
-      // NOT cosTp (which is relative to camera forward). With vector-translation
-      // autopilot, velocity can point in any direction independent of where
-      // the camera is facing — so the body BEHIND the velocity vector must
-      // redshift even if it's currently centred on screen. cosTvel handles that.
+      // Relativistic Doppler colour tint. cosTvel = (line-of-sight · v̂) so a
+      // body behind the velocity vector redshifts even if it's centred on
+      // screen, regardless of where the camera is facing.
       function applyDopplerTint(px, py, radius, cosTvel) {
         if (beta <= 0.02 || radius < 1) return;
         const gamma = 1 / Math.sqrt(1 - beta * beta);
@@ -2131,7 +2112,6 @@
         const obj = _item.obj;
         const proj = _item.proj;
         const depth = _item.depth;
-        const cosTp = _item.cosTp;
         const cosTvel = _item.cosTvel;
 
         if (_item.type === 'star') {
