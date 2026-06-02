@@ -967,14 +967,16 @@
         { key: 'accelTimeSec',        label: 'accel time (s)',min: 0.1,  max: 6,   step: 0.1 },
         { key: 'accelPower',          label: 'accel curve',   min: 1,    max: 6,   step: 0.1 },
       ]},
+      { title: 'DECEL', specs: [
+        { key: 'decelTimeSec',        label: 'brake time (s)',min: 0.2,  max: 15,  step: 0.1 },
+        { key: 'decelPower',          label: 'decel curve',   min: 1,    max: 6,   step: 0.1 },
+        { key: 'decelCorridorMul',    label: 'decel corridor',min: 1.2,  max: 10,  step: 0.1 },
+        { key: 'decelOffsetSec',      label: 'decel delay (s)',min: 0,   max: 5,   step: 0.1 },
+      ]},
       { title: 'APPROACH', specs: [
         { key: 'approachPlanet',      label: 'approach P',    min: 2,    max: 30,  step: 1 },
         { key: 'approachStar',        label: 'approach S',    min: 4,    max: 80,  step: 1 },
         { key: 'approachBlackhole',   label: 'approach BH',   min: 5,    max: 200, step: 1 },
-        { key: 'decelCorridorMul',    label: 'decel corridor',min: 1.2,  max: 10,  step: 0.1 },
-        { key: 'decelPower',          label: 'decel curve',   min: 1,    max: 6,   step: 0.1 },
-        { key: 'decelTimeSec',        label: 'brake time (s)',min: 0.2,  max: 15,  step: 0.1 },
-        { key: 'decelOffsetSec',      label: 'decel delay (s)',min: 0,   max: 5,   step: 0.1 },
         { key: 'flybyOffset',         label: 'flyby offset×', min: 0,    max: 8,   step: 0.1 },
       ]},
       { title: 'ARRIVAL', specs: [
