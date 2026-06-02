@@ -1926,11 +1926,14 @@
               const brakeStartDist = closeThreshold + brakeWidth;
               let curveVel;
               if (dist > brakeStartDist) {
-                // Accel + cruise — time-based.
+                // Accel + cruise — time-based. Floor the ramp at designSpeed
+                // so trips that begin after an arrivalHoldSec=0-velocity linger
+                // still kick off the warp on the first frame.
                 if (elapsedT < aT) {
                   const u = elapsedT / aT;
                   const ease = Math.pow(u, autoCfg.accelPower);
-                  curveVel = autopilotStartVel + (peakVel - autopilotStartVel) * ease;
+                  const rampFloor = Math.max(autopilotStartVel, designSpeed);
+                  curveVel = rampFloor + (peakVel - rampFloor) * ease;
                 } else {
                   curveVel = peakVel;
                 }
