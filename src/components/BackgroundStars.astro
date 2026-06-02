@@ -320,7 +320,7 @@
       approachPlanet: 6,           // per-type approach distance multiplier (× physRadius)
       approachStar: 18,
       approachBlackhole: 50,
-      decelCorridorMul: 2,         // start decel at threshold × this — slowdown only kicks in close to the body
+      decelCorridorMul: 4,         // start decel at threshold × this — the corridor where braking is visible
       decelPower: 3,               // ease exponent (1=linear, 2=quad, 3=cubic, 4=quart)
       designSpeedDivisor: 15,      // designSpeed = closeThreshold / (linger × this). Higher = slower drift (less parallax).
       travelAimRate: 1.2,          // aim slerp rate during travel phase
@@ -1796,12 +1796,17 @@
             // *last* approach (final radius or two) is genuinely slow — you have
             // time to take in the body before drifting past.
             function decelSpeed(d, designSp, threshold) {
-              const warp = Math.min(Math.pow(10, autoCfg.maxWarpExp), d * 1.5);
+              const maxW = Math.pow(10, autoCfg.maxWarpExp);
               const corridor = threshold * autoCfg.decelCorridorMul;
-              if (d > corridor) return warp;
+              // Far from the body: hold constant max-warp cruise speed.
+              // The previous d*1.5 scaling made the camera quietly slow down
+              // for the entire approach, which read as 'slowing down too early'.
+              if (d > corridor) return maxW;
+              // Inside the corridor: ease from maxW down to designSp at the
+              // approach threshold so the brake only kicks in close to the body.
               const t = Math.max(0, Math.min(1, (d - threshold) / (corridor - threshold)));
               const ease = Math.pow(t, autoCfg.decelPower);
-              return designSp + (warp - designSp) * ease;
+              return designSp + (maxW - designSp) * ease;
             }
             const designSpeed = closeThreshold / (autoCfg.linger * autoCfg.designSpeedDivisor);
 
