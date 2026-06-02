@@ -324,7 +324,7 @@
       decelPower: 3,               // ease exponent (1=linear, 2=quad, 3=cubic, 4=quart)
       designSpeedDivisor: 15,      // designSpeed = closeThreshold / (linger × this)
       velocityLerp: 4,             // velocity smoothing rate during autopilot (post-block low-pass)
-      maxWarpExp: 15,              // ceiling on autopilot warp speed in m/s = 10^this — 1e15 = ~3.3M·c (visible smooth motion, not teleport)
+      maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this — 1e18 = ~3.3B·c (smoothness guaranteed by multiplicative ramp + stableCap)
       maxAngleChange: 0.524,       // 30° — picker's preferred forward cone (widens on fallback)
       accelRateUp: 3.5,            // exponential rate when |v| is RISING toward baseSpeed (gentle ramp-up after handoff)
     };
@@ -1729,10 +1729,24 @@
               }
             }
           }
-          // Guard against the picker failing to find a target — skip the
-          // travel physics this frame instead of crashing on a null target.
+          // Guard against the picker failing to find a target. Instead of
+          // zeroing tvx (which decays velocity → 0 and freezes the sim per
+          // the 2026-06-02 handoff blocker), maintain a cruise velocity
+          // along the current heading so the camera keeps flying while the
+          // picker retries next frame.
           if (!autopilotTarget) {
-            tvx = 0; tvy = 0; tvz = 0;
+            const cruiseSpeed = 1e13; // m/s — visible warp cruise
+            const vm = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+            if (vm > 1) {
+              velocity[0] = (velocity[0]/vm) * cruiseSpeed;
+              velocity[1] = (velocity[1]/vm) * cruiseSpeed;
+              velocity[2] = (velocity[2]/vm) * cruiseSpeed;
+            } else {
+              velocity[0] = fx * cruiseSpeed;
+              velocity[1] = fy * cruiseSpeed;
+              velocity[2] = fz * cruiseSpeed;
+            }
+            tvx = velocity[0]; tvy = velocity[1]; tvz = velocity[2];
           } else {
           // Now compute physics quantities against the (possibly new) target.
           const dx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
@@ -1776,22 +1790,25 @@
               //     classic drift. baseSpeed is shrunk early by decelSpeed
               //     across the corridor, so an instant cap there gives a
               //     gradual visible slowdown without overshoot.
-              // Stability clamp: per-frame motion ≤ 10% of remaining distance.
-              // Tighter than 0.5 so the approach is smooth and visible rather
-              // than a single-frame teleport. With 60–180 fps the camera
-              // converges to closeThreshold in ~22–60 frames (0.1–0.3 s).
-              const stableCap = (dist / Math.max(dt, 1e-6)) * 0.1;
+              // Per-frame motion safety, always on: bound velocity so
+              // `velocity * dt ≤ 0.5 * (dist - closeThreshold)`. Gives an
+              // asymptotic glide toward closeThreshold without overshoot
+              // regardless of how far the target is. For long trips
+              // (dist - cThr > 2 * maxW * dt ≈ 3.3e16 m), stableCap exceeds
+              // maxW, so the ceiling actually limits — peak velocity hits
+              // the configured 1e18 m/s.
+              const remaining = Math.max(dist - closeThreshold, closeThreshold * 0.05);
+              const stableCap = remaining / Math.max(dt, 1e-6) * 0.5;
               const baseSpeed = Math.min(decelSpeed(dist, designSpeed, closeThreshold), Math.pow(10, autoCfg.maxWarpExp), stableCap);
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
               const tdx = dx / dn, tdy = dy / dn, tdz = dz / dn;
-              const currentMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
-              let smoothedMag;
-              if (currentMag > baseSpeed) {
-                smoothedMag = baseSpeed; // instant decel cap → no overshoot
-              } else {
-                const accelLerp = Math.min(1, dt * autoCfg.accelRateUp);
-                smoothedMag = currentMag + (baseSpeed - currentMag) * accelLerp;
-              }
+              // Velocity tracks baseSpeed directly. Previous multiplicative
+              // ramp from designSpeed (~1e8 → 1e18) took ~3.5s and 4.6e17 m of
+              // integrated motion, so on typical trips (1e15-1e17 m) velocity
+              // peaked well below maxW. With baseSpeed already bounded by
+              // stableCap, instant assignment is safe — per-frame motion is
+              // capped at 50% of remaining distance.
+              const smoothedMag = baseSpeed;
               velocity[0] = tdx * smoothedMag;
               velocity[1] = tdy * smoothedMag;
               velocity[2] = tdz * smoothedMag;
@@ -1894,16 +1911,17 @@
           const aRad = autopilotTarget.physRadius || 1e9;
           const aMul = autoApproachFor(autopilotTarget.type);
           const cThr = aRad * aMul;
+          // Mirror the actual physics baseSpeed formula so the panel
+          // reflects the real cap.
           const warpCap = Math.pow(10, autoCfg.maxWarpExp);
           const corridor = cThr * autoCfg.decelCorridorMul;
-          const warp = Math.min(warpCap, distAp * 1.5);
-          let bSpd;
-          if (distAp > corridor) bSpd = warp;
-          else {
-            const tt = Math.max(0, Math.min(1, (distAp - cThr) / (corridor - cThr)));
-            const designSp = cThr / (autoCfg.linger * autoCfg.designSpeedDivisor);
-            bSpd = designSp + (warp - designSp) * Math.pow(tt, autoCfg.decelPower);
-          }
+          const designSp = cThr / (autoCfg.linger * autoCfg.designSpeedDivisor);
+          const decelSp = distAp > corridor
+            ? warpCap
+            : designSp + (warpCap - designSp) * Math.pow(Math.max(0, Math.min(1, (distAp - cThr) / (corridor - cThr))), autoCfg.decelPower);
+          const remainingSnap = Math.max(distAp - cThr, cThr * 0.05);
+          const stableCapSnap = remainingSnap / Math.max(dt, 1e-6) * 0.5;
+          const bSpd = Math.min(decelSp, warpCap, stableCapSnap);
           apInfo.target = autopilotTarget.type + ' r=' + fmt(aRad);
           apInfo.dist = distAp; apInfo.centreDist = cDist; apInfo.closeThreshold = cThr;
           apInfo.baseSpeed = bSpd;
