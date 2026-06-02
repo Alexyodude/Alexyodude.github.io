@@ -358,28 +358,34 @@
       const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
       const startV = autopilotStartVel || 0;
       const D = Math.max(0, autopilotOrigDist - cThr);
-      // Closed-form solve for the bell:
+      // Closed-form solve.
       //   accelDist  = aT · (startV + (peak − startV) / (aPow + 1))
       //   cruiseDist = peak · cruiseTime
       //   decelDist  = dT · (designSp + (peak − designSp) / (dPow + 1))
       //   D = accelDist + cruiseDist + decelDist
-      // 1) Try with peak = maxW, see if cruiseTime is positive.
-      const accelAtMax = aT * (startV + (maxW - startV) / (aPow + 1));
-      const decelAtMax = dT * (designSp + (maxW - designSp) / (dPow + 1));
-      let peak, cruiseTime;
-      if (accelAtMax + decelAtMax <= D) {
+      // Given a random target total time T = aT + cruiseTime + dT, solve for
+      // peak. Then cap at maxW (or designSp floor) if the random target is
+      // infeasible for this origDist.
+      const ca = aT * startV * aPow / (aPow + 1);
+      const cd = dT * designSp * dPow / (dPow + 1);
+      const T = Math.max(aT + dT + 0.05, autopilotTripTargetSec || 5);
+      const cruiseTimeReq = Math.max(0, T - aT - dT);
+      const k = aT / (aPow + 1) + cruiseTimeReq + dT / (dPow + 1);
+      let peak = (D - ca - cd) / Math.max(k, 1e-9);
+      let cruiseTime;
+      if (peak > maxW) {
+        // Asked-for time is too short for this distance — cap at maxW and
+        // grow cruise to absorb the surplus.
         peak = maxW;
-        cruiseTime = (D - accelAtMax - decelAtMax) / Math.max(maxW, 1);
-      } else {
-        // 2) No cruise — solve for peak so accel + decel = D exactly.
-        //    aT · startV + aT · (p − startV)/(aPow + 1)
-        //  + dT · designSp + dT · (p − designSp)/(dPow + 1) = D
-        //    p · [aT/(aPow+1) + dT/(dPow+1)] = D − aT·startV·aPow/(aPow+1) − dT·designSp·dPow/(dPow+1)
-        const k  = aT / (aPow + 1) + dT / (dPow + 1);
-        const ca = aT * startV * aPow / (aPow + 1);
-        const cd = dT * designSp * dPow / (dPow + 1);
-        peak = Math.max(designSp, (D - ca - cd) / Math.max(k, 1e-9));
+        const accelAtMax = aT * (startV + (maxW - startV) / (aPow + 1));
+        const decelAtMax = dT * (designSp + (maxW - designSp) / (dPow + 1));
+        cruiseTime = Math.max(0, (D - accelAtMax - decelAtMax) / Math.max(maxW, 1));
+      } else if (peak < designSp) {
+        // Asked-for time is too long for this distance — short trip, no cruise.
+        peak = Math.max(designSp, peak);
         cruiseTime = 0;
+      } else {
+        cruiseTime = cruiseTimeReq;
       }
       autopilotPeakVel = peak;
       autopilotCruiseTime = cruiseTime + cruiseHold;
@@ -400,7 +406,7 @@
       approachStar: 18,
       approachBlackhole: 50,
       decelCorridorMul: 4,         // brake corridor — slowdown only kicks in inside threshold × this
-      decelPower: 1.4,             // ease exponent (1=linear, 2=quad, 3=cubic) — gentle by default
+      decelPower: 2.5,             // ease exponent — values > 1 give a fast initial decel that ramps down toward proximity
       designSpeedDivisor: 15,      // designSpeed = closeThreshold / (linger × this)
       velocityLerp: 4,             // velocity smoothing rate during autopilot (post-block low-pass)
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this — 1e18 = ~3.3B·c (smoothness guaranteed by multiplicative ramp + stableCap)
@@ -416,7 +422,11 @@
       arrivalLookAtBody: 0,        // 0..1 — how strongly camera tracks the body during linger (0 = none, 1 = locked)
       arrivalSettleRate: 4,        // exponential rate for lookAtBody yaw/pitch tracking (higher = snappier)
       decelTimeSec: 2.5,           // brake duration in seconds — long by default so arrivals glide rather than slam
+      tripTimeMin: 3,              // minimum random travel time per trip (seconds)
+      tripTimeMax: 10,             // maximum random travel time per trip (seconds) — picks peakVel to match
+      preSearchDelaySec: 1.5,      // seconds of linger to warp before searching for the next POI
     };
+    let autopilotTripTargetSec = 5; // randomized per trip (autoCfg.tripTimeMin..tripTimeMax)
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
       if (type === 'star') return autoCfg.approachStar;
@@ -970,10 +980,13 @@
         { key: 'arrivalLookAtBody',   label: 'look at body',  min: 0,    max: 1,   step: 0.05 },
         { key: 'arrivalSettleRate',   label: 'look settle',   min: 0.5,  max: 12,  step: 0.1 },
         { key: 'linger',              label: 'linger (s)',    min: 1,    max: 20,  step: 0.5 },
+        { key: 'preSearchDelaySec',   label: 'warp b4 search',min: 0,    max: 10,  step: 0.1 },
         { key: 'designSpeedDivisor',  label: 'drift slowness',min: 1,    max: 12,  step: 0.5 },
       ]},
       { title: 'PICKER', specs: [
         { key: 'maxAngleChange',      label: 'max Δangle rad',min: 0.05, max: Math.PI, step: 0.05 },
+        { key: 'tripTimeMin',         label: 'trip min (s)',  min: 0.5,  max: 20,  step: 0.5 },
+        { key: 'tripTimeMax',         label: 'trip max (s)',  min: 1,    max: 30,  step: 0.5 },
       ]},
     ];
     const debugSpecs = debugGroups.flatMap(g => g.specs);
@@ -1948,6 +1961,11 @@
           autopilotBrakeStart = -1;
           autopilotStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
           autopilotVelHistory.length = 0;
+          {
+            const lo = Math.max(0.5, autoCfg.tripTimeMin || 3);
+            const hi = Math.max(lo, autoCfg.tripTimeMax || 10);
+            autopilotTripTargetSec = lo + Math.random() * (hi - lo);
+          }
           if (!autopilotTarget) return;
           computeFlyByOffset(autopilotTarget, autopilotOffset);
           const _adx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
@@ -1980,11 +1998,18 @@
             if (autopilotPhase === 'traveling' && pcDist < pCloseThreshold) {
               autopilotPhase = 'lingering';
               autopilotLingerStart = tAnimSec;
-              prepareNextTarget();
-              // Don't zero velocity — drift past at the current heading instead
-              // of dead-stop. The linger branch below will smoothly decay |v|
-              // toward designSpeed.
+              // Hold off on prepareNextTarget — let the camera warp for
+              // preSearchDelaySec first (see linger branch below). The
+              // delayed search lets the user see the body for a moment
+              // before the next picker call.
               snapAimToCurrentTarget();
+            }
+            // Mid-linger: once the warp-before-search window has elapsed,
+            // pick the next target. Skipped if the picker already grabbed
+            // one earlier (defensive — should never happen but cheap).
+            if (autopilotPhase === 'lingering' && !nextAutopilotTarget) {
+              const sinceLinger = tAnimSec - autopilotLingerStart;
+              if (sinceLinger >= Math.max(0, autoCfg.preSearchDelaySec || 0)) prepareNextTarget();
             }
             if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > autoCfg.linger) {
               if (nextAutopilotTarget) {
@@ -1998,6 +2023,11 @@
                 autopilotBrakeStart = -1;
                 autopilotStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
                 autopilotVelHistory.length = 0;
+                {
+                  const lo = Math.max(0.5, autoCfg.tripTimeMin || 3);
+                  const hi = Math.max(lo, autoCfg.tripTimeMax || 10);
+                  autopilotTripTargetSec = lo + Math.random() * (hi - lo);
+                }
                 const _hdx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
                 const _hdy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
                 const _hdz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
