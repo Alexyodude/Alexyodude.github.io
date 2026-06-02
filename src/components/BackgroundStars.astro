@@ -27,6 +27,7 @@
     <button type="button" id="coord-pause">⏸ Pause</button>
     <button type="button" id="coord-autopilot">✦ Autopilot</button>
     <button type="button" id="coord-debug" hidden>🐞 Debug</button>
+    <button type="button" id="coord-deep-debug" hidden>🔬 Deep</button>
   </div>
   <div class="coord-actions">
     <span class="coord-help" style="margin:0">visit</span>
@@ -36,6 +37,17 @@
     <button type="button" class="coord-visit" data-type="blackhole">black hole</button>
   </div>
   <div class="coord-help">WASD warp (hold = ramp) · Q/E up/down · right-click drag to look · two-finger drag + pinch on touch</div>
+</aside>
+
+<aside id="deep-debug-panel" class="hidden" aria-hidden="true">
+  <div class="debug-title">DEEP DEBUG — live state every frame</div>
+  <div class="deep-debug-sections" id="deep-debug-sections"></div>
+  <pre class="deep-debug-output" id="deep-debug-output"></pre>
+  <div class="debug-actions">
+    <button type="button" id="deep-debug-pause">Pause</button>
+    <button type="button" id="deep-debug-copy">Copy snapshot</button>
+    <button type="button" id="deep-debug-close">Close</button>
+  </div>
 </aside>
 
 <aside id="debug-panel" class="hidden" aria-hidden="true">
@@ -209,6 +221,54 @@
     background: color-mix(in srgb, var(--color-fg) 8%, transparent);
     padding: 0 3px;
     border-radius: 2px;
+  }
+
+  #deep-debug-panel {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    width: 360px;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 12px 14px;
+    border: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+    backdrop-filter: blur(8px);
+    border-radius: 8px;
+    color: var(--color-fg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+    pointer-events: auto;
+  }
+  #deep-debug-panel.hidden { display: none; }
+  .deep-debug-sections {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2px 8px;
+    margin: 6px 0 10px;
+    font-size: 10px;
+  }
+  .deep-debug-sections label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    color: var(--color-muted);
+  }
+  .deep-debug-sections label input { accent-color: var(--color-accent); }
+  .deep-debug-output {
+    margin: 0;
+    padding: 8px;
+    background: color-mix(in srgb, var(--color-bg) 96%, transparent);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 10px;
+    line-height: 1.35;
+    white-space: pre;
+    overflow-x: auto;
+    max-height: 60vh;
   }
 </style>
 
@@ -622,6 +682,145 @@
     const debugRowsEl = document.getElementById('debug-rows');
     const btnDebug = document.getElementById('coord-debug');
     if (debugEnabled && btnDebug) btnDebug.hidden = false;
+
+    // ===== Deep debug panel (?debug) — live per-frame state stream =====
+    const deepPanel = document.getElementById('deep-debug-panel');
+    const deepSectionsEl = document.getElementById('deep-debug-sections');
+    const deepOutputEl = document.getElementById('deep-debug-output');
+    const btnDeepDebug = document.getElementById('coord-deep-debug');
+    const btnDeepClose = document.getElementById('deep-debug-close');
+    const btnDeepPause = document.getElementById('deep-debug-pause');
+    const btnDeepCopy = document.getElementById('deep-debug-copy');
+    if (debugEnabled && btnDeepDebug) btnDeepDebug.hidden = false;
+    const deepSections = ['camera','basis','velocity','beta','autopilot','aberration','time','config','nearest'];
+    const deepSectionsEnabled = { camera:true, basis:false, velocity:true, beta:true, autopilot:true, aberration:true, time:false, config:false, nearest:true };
+    if (deepSectionsEl) {
+      deepSections.forEach((s) => {
+        const lbl = document.createElement('label');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = !!deepSectionsEnabled[s]; cb.dataset.section = s;
+        cb.addEventListener('change', () => { deepSectionsEnabled[s] = cb.checked; });
+        const txt = document.createElement('span'); txt.textContent = s;
+        lbl.appendChild(cb); lbl.appendChild(txt);
+        deepSectionsEl.appendChild(lbl);
+      });
+    }
+    let deepPaused = false;
+    if (btnDeepPause) btnDeepPause.addEventListener('click', () => {
+      deepPaused = !deepPaused;
+      btnDeepPause.textContent = deepPaused ? 'Resume' : 'Pause';
+    });
+    if (btnDeepClose) btnDeepClose.addEventListener('click', () => {
+      deepPanel.classList.add('hidden');
+      deepPanel.setAttribute('aria-hidden', 'true');
+    });
+    if (btnDeepDebug) btnDeepDebug.addEventListener('click', () => {
+      const open = deepPanel.classList.contains('hidden');
+      deepPanel.classList.toggle('hidden', !open);
+      deepPanel.setAttribute('aria-hidden', open ? 'false' : 'true');
+    });
+    if (btnDeepCopy) btnDeepCopy.addEventListener('click', async () => {
+      const snapshot = deepOutputEl ? deepOutputEl.textContent : '';
+      try { await navigator.clipboard.writeText(snapshot); btnDeepCopy.textContent = 'Copied!'; }
+      catch (e) { btnDeepCopy.textContent = 'Copy failed'; }
+      setTimeout(() => { btnDeepCopy.textContent = 'Copy snapshot'; }, 1200);
+    });
+
+    // State exposed to the deep-debug renderer (populated each frame).
+    window.__deepState = {
+      camera: null, basis: null, velocity: null, beta: null,
+      autopilot: null, aberration: null, time: null, nearest: null,
+    };
+    function fmt(n) {
+      if (n === null || n === undefined || Number.isNaN(n)) return '—';
+      if (typeof n !== 'number') return String(n);
+      if (n === 0) return '0';
+      const abs = Math.abs(n);
+      if (abs >= 1e6 || abs < 1e-3) return n.toExponential(3);
+      return n.toFixed(4);
+    }
+    function fmtVec(a, b, c) { return '(' + fmt(a) + ', ' + fmt(b) + ', ' + fmt(c) + ')'; }
+    function renderDeepDebug() {
+      if (!deepOutputEl) return;
+      if (deepPaused || deepPanel.classList.contains('hidden')) return;
+      const s = window.__deepState;
+      const lines = [];
+      if (deepSectionsEnabled.camera && s.camera) {
+        lines.push('[CAMERA]');
+        lines.push('  pos  : ' + fmtVec(s.camera.x, s.camera.y, s.camera.z));
+        lines.push('  yaw  : ' + fmt(s.camera.yaw) + '  (' + fmt(s.camera.yaw * 180/Math.PI) + '°)');
+        lines.push('  pitch: ' + fmt(s.camera.pitch) + '  (' + fmt(s.camera.pitch * 180/Math.PI) + '°)');
+        lines.push('');
+      }
+      if (deepSectionsEnabled.basis && s.basis) {
+        lines.push('[CAMERA BASIS (world)]');
+        lines.push('  forward: ' + fmtVec(s.basis.fx, s.basis.fy, s.basis.fz));
+        lines.push('  right  : ' + fmtVec(s.basis.rx, s.basis.ry, s.basis.rz));
+        lines.push('  up     : ' + fmtVec(s.basis.ux, s.basis.uy, s.basis.uz));
+        lines.push('');
+      }
+      if (deepSectionsEnabled.velocity && s.velocity) {
+        lines.push('[VELOCITY]');
+        lines.push('  vec  : ' + fmtVec(s.velocity.x, s.velocity.y, s.velocity.z));
+        lines.push('  |v|  : ' + fmt(s.velocity.mag) + '  m/s');
+        lines.push('  v̂    : ' + fmtVec(s.velocity.ux, s.velocity.uy, s.velocity.uz));
+        lines.push('  v·f̂  : ' + fmt(s.velocity.dotForward) + '  (cosine v vs camera-forward)');
+        lines.push('');
+      }
+      if (deepSectionsEnabled.beta && s.beta) {
+        lines.push('[RELATIVISTIC]');
+        lines.push('  β       : ' + fmt(s.beta.beta));
+        lines.push('  γ       : ' + fmt(s.beta.gamma));
+        lines.push('  smoothβ : ' + fmt(s.beta.smooth));
+        lines.push('');
+      }
+      if (deepSectionsEnabled.autopilot && s.autopilot) {
+        lines.push('[AUTOPILOT]');
+        lines.push('  enabled    : ' + s.autopilot.enabled);
+        lines.push('  active     : ' + s.autopilot.active);
+        lines.push('  phase      : ' + s.autopilot.phase);
+        lines.push('  target     : ' + (s.autopilot.target || '—'));
+        lines.push('  dist→tgt   : ' + fmt(s.autopilot.dist) + '  m');
+        lines.push('  centreDist : ' + fmt(s.autopilot.centreDist) + '  m');
+        lines.push('  closeThr   : ' + fmt(s.autopilot.closeThreshold) + '  m');
+        lines.push('  baseSpeed  : ' + fmt(s.autopilot.baseSpeed) + '  m/s');
+        lines.push('  travelTime : ' + fmt(s.autopilot.travelTime) + '  s');
+        lines.push('  lingerTime : ' + fmt(s.autopilot.lingerTime) + '  s');
+        lines.push('  next       : ' + (s.autopilot.next || '—'));
+        lines.push('');
+      }
+      if (deepSectionsEnabled.aberration && s.aberration) {
+        lines.push('[ABERRATION (target body)]');
+        lines.push('  rest dir : ' + fmtVec(s.aberration.nx, s.aberration.ny, s.aberration.nz));
+        lines.push('  cosTvel  : ' + fmt(s.aberration.cosTvel) + '  (rest-frame)');
+        lines.push('  cosTp    : ' + fmt(s.aberration.cosTp) + '  (apparent)');
+        lines.push('  D        : ' + fmt(s.aberration.D) + '  (>1 blue, <1 red)');
+        lines.push('  shift°   : ' + fmt(s.aberration.shiftDeg));
+        lines.push('');
+      }
+      if (deepSectionsEnabled.nearest && s.nearest) {
+        lines.push('[NEAREST BODY]');
+        lines.push('  dist   : ' + fmt(s.nearest.dist) + '  m');
+        lines.push('  radius : ' + fmt(s.nearest.radius) + '  m');
+        lines.push('  ratio  : ' + fmt(s.nearest.ratio) + '  (dist / radius)');
+        lines.push('');
+      }
+      if (deepSectionsEnabled.time && s.time) {
+        lines.push('[TIME]');
+        lines.push('  tAnim    : ' + fmt(s.time.tAnim) + '  s (frozen during linger)');
+        lines.push('  tAnimSec : ' + fmt(s.time.tAnimSec) + '  s (wall clock)');
+        lines.push('  dt       : ' + fmt(s.time.dt) + '  s');
+        lines.push('  fps      : ' + fmt(s.time.fps));
+        lines.push('');
+      }
+      if (deepSectionsEnabled.config) {
+        lines.push('[autoCfg]');
+        for (const k in autoCfg) lines.push('  ' + k.padEnd(22) + ': ' + fmt(autoCfg[k]));
+        lines.push('');
+      }
+      deepOutputEl.textContent = lines.join('\n');
+    }
+    setInterval(renderDeepDebug, 100);
     const btnDebugClose = document.getElementById('debug-close');
     const btnDebugReset = document.getElementById('debug-reset');
     const btnDebugCopy = document.getElementById('debug-copy');
@@ -1699,6 +1898,64 @@
       cam[2] += velocity[2] * dt;
       const camV = Math.sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
       lastCamV = camV;
+
+      // Populate the deep-debug snapshot (the panel polls this at 10Hz).
+      if (window.__deepState) {
+        const vUxS = camV > 1 ? velocity[0]/camV : 0;
+        const vUyS = camV > 1 ? velocity[1]/camV : 0;
+        const vUzS = camV > 1 ? velocity[2]/camV : 0;
+        const dotForward = vUxS * fx + vUyS * fy + vUzS * fz;
+        window.__deepState.camera = { x: cam[0], y: cam[1], z: cam[2], yaw, pitch };
+        window.__deepState.basis = { fx, fy, fz, rx, ry, rz, ux, uy, uz };
+        window.__deepState.velocity = { x: velocity[0], y: velocity[1], z: velocity[2], mag: camV, ux: vUxS, uy: vUyS, uz: vUzS, dotForward };
+        const betaNow = Math.min(0.999, camV / C);
+        window.__deepState.beta = { beta: betaNow, gamma: 1/Math.sqrt(1 - betaNow*betaNow), smooth: smoothBeta };
+        window.__deepState.time = { tAnim, tAnimSec, dt, fps: dt > 0 ? 1/dt : 0 };
+        let apInfo = { enabled: autopilot, active: !!autopilotActive, phase: autopilotPhase, target: null, dist: 0, centreDist: 0, closeThreshold: 0, baseSpeed: 0, travelTime: 0, lingerTime: 0, next: null };
+        if (autopilotTarget) {
+          const tdx0 = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
+          const tdy0 = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
+          const tdz0 = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
+          const distAp = Math.sqrt(tdx0*tdx0 + tdy0*tdy0 + tdz0*tdz0);
+          const cdx0 = autopilotTarget.wx - cam[0];
+          const cdy0 = autopilotTarget.wy - cam[1];
+          const cdz0 = autopilotTarget.wz - cam[2];
+          const cDist = Math.sqrt(cdx0*cdx0 + cdy0*cdy0 + cdz0*cdz0);
+          const aRad = autopilotTarget.physRadius || 1e9;
+          const aMul = autoApproachFor(autopilotTarget.type);
+          const cThr = aRad * aMul;
+          const warpCap = Math.pow(10, autoCfg.maxWarpExp);
+          const corridor = cThr * autoCfg.decelCorridorMul;
+          const warp = Math.min(warpCap, distAp * 1.5);
+          let bSpd;
+          if (distAp > corridor) bSpd = warp;
+          else {
+            const tt = Math.max(0, Math.min(1, (distAp - cThr) / (corridor - cThr)));
+            const designSp = cThr / (autoCfg.linger * autoCfg.designSpeedDivisor);
+            bSpd = designSp + (warp - designSp) * Math.pow(tt, autoCfg.decelPower);
+          }
+          apInfo.target = autopilotTarget.type + ' r=' + fmt(aRad);
+          apInfo.dist = distAp; apInfo.centreDist = cDist; apInfo.closeThreshold = cThr;
+          apInfo.baseSpeed = bSpd;
+          apInfo.travelTime = autopilotPhase === 'traveling' ? (tAnimSec - autopilotTravelStart) : 0;
+          apInfo.lingerTime = autopilotPhase === 'lingering' ? (tAnimSec - autopilotLingerStart) : 0;
+          if (nextAutopilotTarget) apInfo.next = nextAutopilotTarget.type + ' r=' + fmt(nextAutopilotTarget.physRadius || 0);
+          // Aberration breakdown for the target body
+          const oM = Math.sqrt(cdx0*cdx0 + cdy0*cdy0 + cdz0*cdz0) || 1;
+          const nxA = cdx0/oM, nyA = cdy0/oM, nzA = cdz0/oM;
+          const ctV = camV > 1 ? (nxA*vUxS + nyA*vUyS + nzA*vUzS) : 0;
+          const ctP = (camV > 1 && smoothBeta > 0.005) ? (ctV + smoothBeta) / (1 + smoothBeta * ctV) : ctV;
+          const gammaA = 1 / Math.sqrt(1 - smoothBeta * smoothBeta);
+          const dA = gammaA * (1 + smoothBeta * ctV);
+          window.__deepState.aberration = { nx: nxA, ny: nyA, nz: nzA, cosTvel: ctV, cosTp: ctP, D: dA, shiftDeg: (Math.acos(Math.max(-1,Math.min(1,ctP))) - Math.acos(Math.max(-1,Math.min(1,ctV)))) * 180/Math.PI };
+        } else {
+          window.__deepState.aberration = null;
+        }
+        window.__deepState.autopilot = apInfo;
+        if (lastNearestD < Infinity) {
+          window.__deepState.nearest = { dist: lastNearestD, radius: lastNearestR, ratio: lastNearestR > 0 ? lastNearestD / lastNearestR : Infinity };
+        } else { window.__deepState.nearest = null; }
+      }
       if (nowMs - lastSavedMs > 500) {
         savePosition();
         updateUrl();
