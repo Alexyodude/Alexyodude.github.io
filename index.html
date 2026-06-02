@@ -1791,35 +1791,40 @@
               // log-decay from corridor width down to 5% in decelTimeSec.
               // This makes the brake long enough to be visible on the timeline
               // instead of vanishing in ~0.1s.
-              // Time-based bell-curve velocity profile. All shape comes from
-              // (accelTimeSec, accelPower) on the front, (decelTimeSec,
-              // decelPower) on the back, with a flat cruise plateau between.
-              // peakVel and cruiseTime are solved at travel start so the
-              // integrated distance exactly equals `origDist - closeThreshold`,
-              // so the camera arrives at threshold right when decelTimeSec
-              // elapses — no need for stableCap-driven brake.
+              // Bell-curve velocity profile. Accel + cruise are time-based;
+              // brake is DISTANCE-based so velocity keeps dropping along the
+              // (remaining/brakeWidth)^decelPower curve all the way down to
+              // designSpeed at closeThreshold (no constant-designSpeed tail).
               const aT = Math.max(0.05, autoCfg.accelTimeSec);
               const dT = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
               const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
+              const dPow = Math.max(1, autoCfg.decelPower);
               const cruiseT = autopilotCruiseTime;
               const peakVel = Math.max(autopilotStartVel, autopilotPeakVel);
               const elapsedT = tAnimSec - autopilotTravelStart;
-              const totalT = aT + cruiseT + decelDelay + dT;
               const remaining = Math.max(dist - closeThreshold, closeThreshold * 0.05);
               const safetyCap = remaining / Math.max(dt, 1e-6);
+              // Brake width is the dist budget reserved for the time-based
+              // brake at travel start (the closed-form integral).
+              const brakeWidth = Math.max(closeThreshold * 0.05,
+                dT * (designSpeed + (peakVel - designSpeed) / (dPow + 1)));
+              const brakeStartDist = closeThreshold + brakeWidth;
               let curveVel;
-              if (elapsedT < aT) {
-                const u = elapsedT / aT;
-                const ease = Math.pow(u, autoCfg.accelPower);
-                curveVel = autopilotStartVel + (peakVel - autopilotStartVel) * ease;
-              } else if (elapsedT < aT + cruiseT + decelDelay) {
-                curveVel = peakVel;
-              } else if (elapsedT < totalT) {
-                const u = (elapsedT - aT - cruiseT - decelDelay) / dT;
-                const ease = Math.pow(1 - u, Math.max(1, autoCfg.decelPower));
-                curveVel = designSpeed + (peakVel - designSpeed) * ease;
+              if (dist > brakeStartDist) {
+                // Accel + cruise — time-based.
+                if (elapsedT < aT) {
+                  const u = elapsedT / aT;
+                  const ease = Math.pow(u, autoCfg.accelPower);
+                  curveVel = autopilotStartVel + (peakVel - autopilotStartVel) * ease;
+                } else {
+                  curveVel = peakVel;
+                }
               } else {
-                curveVel = designSpeed;
+                // Brake — distance-based power curve, so velocity drops
+                // continuously until closeThreshold is reached.
+                const distU = Math.max(0, Math.min(1, (dist - closeThreshold) / brakeWidth));
+                const ease = Math.pow(distU, dPow);
+                curveVel = designSpeed + (peakVel - designSpeed) * ease;
               }
               const baseSpeed = Math.min(curveVel, safetyCap);
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
