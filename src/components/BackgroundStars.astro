@@ -53,10 +53,6 @@
 <aside id="debug-panel" class="hidden" aria-hidden="true">
   <div class="debug-title">AUTOPILOT TUNING</div>
   <div class="debug-rows" id="debug-rows"></div>
-  <div class="debug-curve">
-    <div class="debug-curve-label">DECEL CURVE (warp → drift)</div>
-    <canvas id="debug-curve-canvas" width="220" height="80"></canvas>
-  </div>
   <div class="debug-actions">
     <button type="button" id="debug-next-poi">Next POI</button>
     <button type="button" id="debug-reset">Reset</button>
@@ -64,6 +60,11 @@
     <button type="button" id="debug-close">Close</button>
   </div>
   <div class="debug-help">Sliders update live. "Copy config" puts the current values on your clipboard — paste back into <code>autoCfg</code> at the top of the script to make them the new defaults.</div>
+</aside>
+
+<aside id="debug-plot-panel" class="hidden" aria-hidden="true">
+  <div class="debug-title">WARP TIMELINE</div>
+  <canvas id="debug-curve-canvas" width="320" height="120"></canvas>
 </aside>
 
 <style>
@@ -211,12 +212,33 @@
   .debug-row label { color: var(--color-muted); }
   .debug-row input[type="range"] { width: 100%; accent-color: var(--color-accent); }
   .debug-row .debug-val { text-align: right; color: var(--color-fg); }
-  .debug-curve { margin-top: 10px; }
-  .debug-curve-label { font-size: 10px; color: var(--color-muted); margin-bottom: 4px; }
+  #debug-plot-panel {
+    position: fixed;
+    bottom: 16px;
+    right: 296px;
+    z-index: 30;
+    width: 340px;
+    min-width: 240px;
+    height: auto;
+    min-height: 160px;
+    overflow: auto;
+    resize: both;
+    padding: 12px 14px;
+    border: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-radius: 8px;
+    color: var(--color-fg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+    pointer-events: auto;
+  }
+  #debug-plot-panel.hidden { display: none; }
   #debug-curve-canvas {
     display: block;
     width: 100%;
-    height: 80px;
+    height: calc(100% - 24px);
+    min-height: 120px;
     border: 1px solid var(--color-border);
     border-radius: 4px;
     background: color-mix(in srgb, var(--color-bg) 95%, transparent);
@@ -911,9 +933,10 @@
       deepOutputEl.textContent = lines.join('\n');
     }
     setInterval(renderDeepDebug, 100);
-    // Live curve marker refresh — only when the debug panel is actually open.
+    // Live curve marker refresh — only when the plot panel is actually open.
     setInterval(() => {
-      if (debugPanel && !debugPanel.classList.contains('hidden')) drawDecelCurve();
+      const plot = document.getElementById('debug-plot-panel');
+      if (plot && !plot.classList.contains('hidden')) drawDecelCurve();
     }, 100);
     // Make a panel draggable by its title bar. Switches from bottom/right
     // anchoring to top/left so subsequent CSS resize still works.
@@ -950,6 +973,7 @@
     }
     makeDraggable(debugPanel);
     makeDraggable(deepPanel);
+    makeDraggable(debugPlotPanel);
     const btnDebugClose = document.getElementById('debug-close');
     const btnDebugReset = document.getElementById('debug-reset');
     const btnDebugCopy = document.getElementById('debug-copy');
@@ -1180,10 +1204,15 @@
         });
       });
     }
+    const debugPlotPanel = document.getElementById('debug-plot-panel');
     function setDebugOpen(open) {
       if (!debugPanel) return;
       debugPanel.classList.toggle('hidden', !open);
       debugPanel.setAttribute('aria-hidden', open ? 'false' : 'true');
+      if (debugPlotPanel) {
+        debugPlotPanel.classList.toggle('hidden', !open);
+        debugPlotPanel.setAttribute('aria-hidden', open ? 'false' : 'true');
+      }
       if (open) drawDecelCurve();
     }
     if (btnDebug) btnDebug.addEventListener('click', () => setDebugOpen(debugPanel.classList.contains('hidden')));
