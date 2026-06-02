@@ -1729,6 +1729,15 @@
       const renderD2 = RENDER_DISTANCE * RENDER_DISTANCE;
 
       const drawList = []; // painter's-algorithm list: every visible object, sorted far→near
+      // Unit vector along current camera velocity (world frame). Used for the
+      // velocity-aligned Doppler cosine: cos θ = (source direction · v̂). Camera
+      // facing is independent of velocity in vector-translation autopilot, so
+      // we can't reuse cosTp (which is computed against camera-forward +Z).
+      const vMagFrame = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+      const vUx = vMagFrame > 1 ? velocity[0] / vMagFrame : 0;
+      const vUy = vMagFrame > 1 ? velocity[1] / vMagFrame : 0;
+      const vUz = vMagFrame > 1 ? velocity[2] / vMagFrame : 0;
+      const haveVel = vMagFrame > 1;
       let nearestThisFrame = Infinity;
       let nearestRThisFrame = 0;
 
@@ -1774,12 +1783,17 @@
               // a nebula sorts in front of the nebula correctly.
               const r3d = obj.physRadius || 0;
               const sortDepth = Math.max(1, aoz - r3d);
+              // Velocity-aligned cosine for Doppler: cos(angle between source
+              // direction and velocity). cosTvel > 0 → source in motion direction
+              // → blueshift; cosTvel < 0 → behind us → redshift.
+              const oMag = Math.sqrt(d2) || 1;
+              const cosTvel = haveVel ? (ox * vUx + oy * vUy + oz * vUz) / oMag : 0;
               if (obj.type === 'star' || obj.type === 'planet') {
-                drawList.push({ type: obj.type, obj, proj, depth, cosTp, sortDepth });
+                drawList.push({ type: obj.type, obj, proj, depth, cosTp, cosTvel, sortDepth });
               } else if (obj.type === 'nebula') {
-                drawList.push({ type: 'nebula', obj, proj, depth, cosTp, sortDepth });
+                drawList.push({ type: 'nebula', obj, proj, depth, cosTp, cosTvel, sortDepth });
               } else if (obj.type === 'blackhole') {
-                drawList.push({ type: 'blackhole', obj, proj, depth, cosTp, sortDepth });
+                drawList.push({ type: 'blackhole', obj, proj, depth, cosTp, cosTvel, sortDepth });
               }
             }
           }
@@ -1790,14 +1804,15 @@
       // render before nearer ones (proper occlusion at all distances).
       // Sort by forward-axis depth (near edge), descending — far first, near last.
       drawList.sort((a, b) => b.sortDepth - a.sortDepth);
-      // Apply a relativistic Doppler colour tint on top of a textured body so
-      // it visibly red-shifts when we're receding and blue-shifts when we're
-      // approaching. cosTp here is the cosine between camera velocity and the
-      // line of sight (post-aberration). D > 1 → blueshift, D < 1 → redshift.
-      function applyDopplerTint(px, py, radius, cosTp) {
+      // Relativistic Doppler colour tint. Uses cosTvel = (line-of-sight · v̂),
+      // NOT cosTp (which is relative to camera forward). With vector-translation
+      // autopilot, velocity can point in any direction independent of where
+      // the camera is facing — so the body BEHIND the velocity vector must
+      // redshift even if it's currently centred on screen. cosTvel handles that.
+      function applyDopplerTint(px, py, radius, cosTvel) {
         if (beta <= 0.02 || radius < 1) return;
         const gamma = 1 / Math.sqrt(1 - beta * beta);
-        const D = gamma * (1 + beta * cosTp);
+        const D = gamma * (1 + beta * cosTvel);
         const logD = Math.log(D);
         if (Math.abs(logD) < 0.03) return;
         const ta = Math.min(0.75, Math.abs(logD) * 1.2);
@@ -1817,13 +1832,14 @@
         const proj = _item.proj;
         const depth = _item.depth;
         const cosTp = _item.cosTp;
+        const cosTvel = _item.cosTvel;
 
         if (_item.type === 'star') {
           const angRad = obj.physRadius / 1e15 * proj.k;
           if (angRad > 0.0003) {
             const tex = getStarTexture(obj);
             ctx.drawImage(tex, proj.px - angRad, proj.py - angRad, angRad * 2, angRad * 2);
-            applyDopplerTint(proj.px, proj.py, angRad, cosTp);
+            applyDopplerTint(proj.px, proj.py, angRad, cosTvel);
             if (angRad > 0.001) {
               const rng = mulberry32(objHash(obj) ^ 0xF1A4E5);
               const rotPeriod = 8 + rng() * 18;
@@ -1893,7 +1909,7 @@
             let cr = obj.cr, cg = obj.cg, cb = obj.cb;
             if (beta > 0.01) {
               const gamma = 1 / Math.sqrt(1 - beta * beta);
-              const D = gamma * (1 + beta * cosTp);
+              const D = gamma * (1 + beta * cosTvel);
               const dop = dopplerColor(cr, cg, cb, D);
               cr = (dop >> 16) & 0xff;
               cg = (dop >> 8) & 0xff;
@@ -1926,7 +1942,7 @@
           } else {
             const tex = getPlanetTexture(obj);
             ctx.drawImage(tex, proj.px - rad, proj.py - rad, rad * 2, rad * 2);
-            applyDopplerTint(proj.px, proj.py, rad, cosTp);
+            applyDopplerTint(proj.px, proj.py, rad, cosTvel);
             if (rad > 0.25 && (obj.kind === 'ocean' || obj.kind === 'gas_giant' || obj.kind === 'ice_giant' || obj.kind === 'shrouded')) {
               const ar = Math.min(255, obj.cr + 60);
               const ag = Math.min(255, obj.cg + 60);
