@@ -333,6 +333,7 @@
     let autopilotTravelStart = 0; // wall-clock sec when current travel began (for max-rotate-time cap)
     let autopilotOrigDist = 0;    // dist to current target at travel start (used by debug curve marker)
     let autopilotBrakeStart = -1; // wall-clock sec when camera first crossed into the brake corridor (-1 = not braking yet)
+    let autopilotStartVel = 0;    // |v| at travel start — ramp begins from here so trips smoothly connect to the previous arrival
     let autopilotExpectedAccel = 0;    // sec spent in accel band (constant: accelTimeSec)
     let autopilotExpectedCruise = 0;   // sec spent cruising at maxW
     let autopilotExpectedDecel = 0;    // sec spent decelerating across corridor
@@ -345,19 +346,68 @@
       const corridor = cThr * autoCfg.decelCorridorMul;
       const offset = Math.max(0.05, Math.min(1, autoCfg.warpCurveOffset || 1));
       const maxW = Math.pow(10, autoCfg.maxWarpExp) * offset;
+      const maxWAbs = Math.pow(10, autoCfg.maxWarpExp);
       const designSp = cThr / Math.max(0.1, (autoCfg.linger * autoCfg.designSpeedDivisor));
       const aT = Math.max(0.05, autoCfg.accelTimeSec);
-      const dAccel = aT * (designSp + (maxW - designSp) / (autoCfg.accelPower + 1));
-      // Brake is stableCap-driven and converges in ~decelTimeSec by design.
-      // (See stableCap formula in the travel block.)
+      const aPow = autoCfg.accelPower;
+      const dPow = autoCfg.decelPower;
       const tDecel = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
-      const dCruise = Math.max(0, autopilotOrigDist - corridor - dAccel);
-      const tCruise = (maxW > 1 ? dCruise / maxW : 0) + Math.max(0, autoCfg.cruiseMinSec || 0);
-      const tDecelTotal = tDecel + Math.max(0, autoCfg.decelOffsetSec || 0);
-      autopilotExpectedAccel = aT;
-      autopilotExpectedCruise = tCruise;
-      autopilotExpectedDecel = tDecelTotal;
-      autopilotExpectedDuration = Math.max(0.1, aT + tCruise + tDecelTotal);
+      const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
+      const cruiseHold = Math.max(0, autoCfg.cruiseMinSec || 0);
+      // Numerical simulation mirroring the travel-branch physics — gives an
+      // accurate expectedDuration so the time-linear marker advances at the
+      // real per-second rate and lands at uPos=1 exactly on arrival.
+      const simDt = 1 / 60;
+      let simDist = autopilotOrigDist;
+      let simT = 0;
+      let brakeStart = -1;
+      let accelEndT = 0;
+      let cruiseEndT = 0;
+      let extraCruise = cruiseHold;
+      const maxIter = Math.ceil(60 * 60); // cap at 60 sec sim
+      for (let i = 0; i < maxIter; i++) {
+        if (simDist <= cThr) break;
+        const inCorridor = simDist < corridor;
+        if (inCorridor && brakeStart < 0) { brakeStart = simT; cruiseEndT = simT; }
+        const sinceCorridor = brakeStart >= 0 ? simT - brakeStart : 0;
+        const inDelay = inCorridor && sinceCorridor < decelDelay;
+        const remaining = Math.max(simDist - cThr, cThr * 0.05);
+        const capFactor = (inCorridor && !inDelay) ? (1 - Math.exp(-3 * simDt / tDecel)) : 0.5;
+        const stableCap = remaining * capFactor / simDt;
+        let decelFloor;
+        if (inDelay) decelFloor = maxW;
+        else if (inCorridor) {
+          const t = Math.max(0, Math.min(1, (simDist - cThr) / (corridor - cThr)));
+          decelFloor = designSp + (maxW - designSp) * Math.pow(t, dPow);
+        } else decelFloor = maxW;
+        const baseSpeed = Math.min(decelFloor, maxWAbs, stableCap);
+        let mag;
+        if (!inCorridor) {
+          const accelU = Math.max(0, Math.min(1, simT / aT));
+          if (accelU >= 1 && accelEndT === 0) accelEndT = simT;
+          const accelEase = Math.pow(accelU, aPow);
+          const rampFloor = Math.min(autopilotStartVel || 0, baseSpeed);
+          const rampedTarget = rampFloor + (baseSpeed - rampFloor) * accelEase;
+          mag = Math.min(rampedTarget, baseSpeed);
+        } else {
+          mag = baseSpeed;
+        }
+        // Inject cruise hold once accel completes and before corridor entry.
+        if (!inCorridor && accelEndT > 0 && extraCruise > 0) {
+          const consume = Math.min(simDt, extraCruise);
+          simT += consume;
+          extraCruise -= consume;
+          continue;
+        }
+        simDist -= mag * simDt;
+        simT += simDt;
+      }
+      if (accelEndT === 0) accelEndT = Math.min(simT, aT);
+      if (cruiseEndT === 0) cruiseEndT = simT;
+      autopilotExpectedAccel = accelEndT;
+      autopilotExpectedCruise = Math.max(0, cruiseEndT - accelEndT) + cruiseHold;
+      autopilotExpectedDecel = Math.max(0.05, simT - cruiseEndT);
+      autopilotExpectedDuration = Math.max(0.1, simT + cruiseHold);
     }
     const autopilotOffset = [0, 0, 0]; // perpendicular fly-by offset (so we pass on the side)
     const nextAutopilotOffset = [0, 0, 0]; // fly-by offset for the queued next target
@@ -988,6 +1038,11 @@
       let B = Math.max(A + 0.02, Math.min(0.98, (autopilotExpectedAccel + autopilotExpectedCruise) / total));
       const SAMPLES = 120;
       const plateau = Math.max(0.05, Math.min(1, autoCfg.warpCurveOffset || 1));
+      // Start height = previous trip's end velocity, normalized to the
+      // full warp ceiling. Lets the accel ramp visually continue the curve
+      // from where the previous one finished.
+      const maxAbs = Math.pow(10, autoCfg.maxWarpExp);
+      const startNorm = Math.max(0, Math.min(plateau, (autopilotStartVel || 0) / maxAbs));
       ctx2.strokeStyle = accent;
       ctx2.lineWidth = 1.6;
       ctx2.beginPath();
@@ -996,7 +1051,7 @@
         let v;
         if (u < A) {
           const t = u / A;
-          v = Math.pow(t, aPow) * plateau;
+          v = startNorm + (plateau - startNorm) * Math.pow(t, aPow);
         } else if (u < B) {
           v = plateau;
         } else {
@@ -1892,6 +1947,7 @@
           autopilotPhase = 'traveling';
           autopilotTravelStart = tAnimSec;
           autopilotBrakeStart = -1;
+          autopilotStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
           if (!autopilotTarget) return;
           computeFlyByOffset(autopilotTarget, autopilotOffset);
           const _adx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
@@ -1940,6 +1996,7 @@
                 autopilotPhase = 'traveling';
                 autopilotTravelStart = tAnimSec;
                 autopilotBrakeStart = -1;
+                autopilotStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
                 const _hdx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
                 const _hdy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
                 const _hdz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
@@ -2052,7 +2109,12 @@
               const accelElapsed = tAnimSec - autopilotTravelStart;
               const accelU = Math.max(0, Math.min(1, accelElapsed / Math.max(1e-3, autoCfg.accelTimeSec)));
               const accelEase = Math.pow(accelU, autoCfg.accelPower);
-              const rampedTarget = designSpeed + (baseSpeed - designSpeed) * accelEase;
+              // Ramp from autopilotStartVel (whatever |v| was at travel start)
+              // instead of designSpeed, so the velocity profile smoothly
+              // continues from where the previous arrival left off — no jump
+              // at the linger→travel handoff.
+              const rampFloor = Math.min(autopilotStartVel, baseSpeed);
+              const rampedTarget = rampFloor + (baseSpeed - rampFloor) * accelEase;
               const smoothedMag = Math.min(rampedTarget, baseSpeed);
               velocity[0] = tdx * smoothedMag;
               velocity[1] = tdy * smoothedMag;
