@@ -684,7 +684,9 @@
       ctx2.stroke();
       ctx2.setLineDash([]);
       // Live POI marker — vertical line at current trip position.
-      if (autopilotTarget && autopilotActive) {
+      // Uses outer-scope state only; this runs from setInterval so locals
+      // from the animation loop (autopilotActive / tAnimSec) aren't visible.
+      if (autopilotTarget) {
         const tdx0 = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
         const tdy0 = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
         const tdz0 = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
@@ -693,6 +695,7 @@
         const aMul = autoApproachFor(autopilotTarget.type);
         const cThr = aRad * aMul;
         const corridorAbs = cThr * corridor;
+        const tSecNow = performance.now() / 1000;
         let uPos = 0;
         if (autopilotPhase === 'lingering') {
           uPos = 1;
@@ -702,7 +705,7 @@
           uPos = B + inBrake * (1 - B);
         } else {
           // Accel/cruise — map elapsed travel time onto [0, B].
-          const elapsed = tAnimSec - autopilotTravelStart;
+          const elapsed = tSecNow - autopilotTravelStart;
           const uA = Math.max(0, Math.min(1, elapsed / Math.max(1e-3, autoCfg.accelTimeSec)));
           if (uA < 1) uPos = uA * A;        // still in accel band
           else uPos = A + 0.5 * (B - A);    // assume mid-cruise (no fixed cruise time)
@@ -1665,7 +1668,7 @@
               // through space stays continuous.
               const curMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
               const targetMag = designSpeed;
-              const lerp = Math.min(1, dt * autoCfg.accelRateUp);
+              const lerp = Math.min(1, dt * 3.5);
               const newMag = curMag + (targetMag - curMag) * lerp;
               if (curMag > 1) {
                 velocity[0] = velocity[0] / curMag * newMag;
