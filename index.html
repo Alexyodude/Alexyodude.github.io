@@ -400,11 +400,11 @@
     refreshAutopilotButton();
 
     // ===== Debug panel for autopilot tuning =====
-    // Only available when the URL has ?debug — keeps the panel out of the way
-    // for normal visitors. Press backtick (`) once enabled to toggle it.
+    // Debug panel is on by default. The buttons appear in the coord overlay
+    // so anyone can open the autopilot tuner / live telemetry stream.
     const debugEnabled = (() => {
-      try { return new URLSearchParams(location.search).has('debug'); }
-      catch (e) { return false; }
+      try { return !new URLSearchParams(location.search).has('nodebug'); }
+      catch (e) { return true; }
     })();
     const debugPanel = document.getElementById('debug-panel');
     const debugRowsEl = document.getElementById('debug-rows');
