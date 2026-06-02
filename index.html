@@ -679,10 +679,11 @@
       const val = inp.parentElement && inp.parentElement.querySelector('.debug-val');
       if (val) val.textContent = (Math.round(autoCfg[key] * 100) / 100).toString();
     }
-    if (debugCanvas) {
+    const _curveCanvasForDrag = document.getElementById('debug-curve-canvas');
+    if (_curveCanvasForDrag) {
       let dragMode = null;
-      debugCanvas.addEventListener('pointerdown', (e) => {
-        const r = debugCanvas.getBoundingClientRect();
+      _curveCanvasForDrag.addEventListener('pointerdown', (e) => {
+        const r = _curveCanvasForDrag.getBoundingClientRect();
         const u = (e.clientX - r.left) / r.width;
         // A and B in the curve fn are dynamic — compute them the same way
         // drawDecelCurve does.
@@ -692,12 +693,12 @@
         if (u < A) dragMode = 'accel';
         else if (u > B) dragMode = 'decel';
         else return;
-        debugCanvas.setPointerCapture(e.pointerId);
+        _curveCanvasForDrag.setPointerCapture(e.pointerId);
         e.preventDefault();
       });
-      debugCanvas.addEventListener('pointermove', (e) => {
+      _curveCanvasForDrag.addEventListener('pointermove', (e) => {
         if (!dragMode) return;
-        const r = debugCanvas.getBoundingClientRect();
+        const r = _curveCanvasForDrag.getBoundingClientRect();
         const u = (e.clientX - r.left) / r.width;
         const y = (e.clientY - r.top) / r.height;
         const total = autopilotExpectedDuration || 1;
@@ -726,11 +727,11 @@
       const stopDrag = (e) => {
         if (!dragMode) return;
         dragMode = null;
-        try { debugCanvas.releasePointerCapture(e.pointerId); } catch {}
+        try { _curveCanvasForDrag.releasePointerCapture(e.pointerId); } catch {}
       };
-      debugCanvas.addEventListener('pointerup', stopDrag);
-      debugCanvas.addEventListener('pointercancel', stopDrag);
-      debugCanvas.style.cursor = 'ns-resize';
+      _curveCanvasForDrag.addEventListener('pointerup', stopDrag);
+      _curveCanvasForDrag.addEventListener('pointercancel', stopDrag);
+      _curveCanvasForDrag.style.cursor = 'ns-resize';
     }
     const btnDebugClose = document.getElementById('debug-close');
     const btnDebugReset = document.getElementById('debug-reset');
