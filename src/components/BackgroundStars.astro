@@ -855,6 +855,7 @@
       const corridor = autoCfg.decelCorridorMul;
       const dPow = autoCfg.decelPower;
       const aPow = autoCfg.accelPower;
+      // Baseline at bottom of plot (drift speed).
       ctx2.strokeStyle = muted;
       ctx2.setLineDash([2, 3]);
       ctx2.beginPath();
@@ -862,33 +863,31 @@
       ctx2.lineTo(padL + plotW, padT + plotH);
       ctx2.stroke();
       ctx2.setLineDash([]);
-      const SAMPLES = 80;
-      // Y axis: speed (top = warp, bottom = drift).
-      // Accel (orange) goes bottom-left → top-right: speed climbs over time.
-      // Decel (blue) goes top-left → bottom-right: speed drops over distance
-      // into the brake corridor. The two curves cross to form an X.
-      ctx2.strokeStyle = '#f7a23a';
-      ctx2.lineWidth = 1.5;
-      ctx2.beginPath();
-      for (let i = 0; i <= SAMPLES; i++) {
-        const u = i / SAMPLES;
-        const ease = Math.pow(u, aPow);
-        const x = padL + u * plotW;
-        const y = padT + plotH * (1 - ease);
-        if (i === 0) ctx2.moveTo(x, y);
-        else ctx2.lineTo(x, y);
-      }
-      ctx2.stroke();
+      // Trip phases laid out on the x-axis:
+      //   [0,    A] accel ramp (drift → warp)
+      //   [A,    B] cruise at warp
+      //   [B,    1] decel brake (warp → drift)
+      // A and B are visual proportions; the actual cruise length depends on
+      // trip distance but we always reserve a band so the plateau is visible.
+      const A = 0.30, B = 0.70;
+      const SAMPLES = 120;
       ctx2.strokeStyle = accent;
-      ctx2.lineWidth = 1.5;
+      ctx2.lineWidth = 1.6;
       ctx2.beginPath();
       for (let i = 0; i <= SAMPLES; i++) {
         const u = i / SAMPLES;
-        // Decel runs in reverse — at u=0 we're at corridor entry with full
-        // warp, at u=1 we're at threshold with drift speed.
-        const ease = Math.pow(1 - u, dPow);
+        let v;
+        if (u < A) {
+          const t = u / A;
+          v = Math.pow(t, aPow);
+        } else if (u < B) {
+          v = 1;
+        } else {
+          const t = (1 - u) / (1 - B);
+          v = Math.pow(t, dPow);
+        }
         const x = padL + u * plotW;
-        const y = padT + plotH * (1 - ease);
+        const y = padT + plotH * (1 - v);
         if (i === 0) ctx2.moveTo(x, y);
         else ctx2.lineTo(x, y);
       }
@@ -897,15 +896,20 @@
       ctx2.font = '9px ui-monospace, monospace';
       ctx2.fillText('warp', padL + 2, padT + 9);
       ctx2.fillText('drift', padL + 2, padT + plotH - 2);
-      const rTxt = 'corridor ' + corridor.toFixed(1) + '×';
-      ctx2.fillText(rTxt, padL + plotW - ctx2.measureText(rTxt).width - 2, padT + 9);
-      ctx2.fillText('threshold', padL + plotW - ctx2.measureText('threshold').width - 2, padT + plotH - 2);
-      ctx2.fillStyle = '#f7a23a';
-      ctx2.fillText('accel', padL + 2, padT + 20);
-      ctx2.fillStyle = accent;
-      const dTxt = 'decel';
-      ctx2.fillText(dTxt, padL + plotW - ctx2.measureText(dTxt).width - 2, padT + 20);
-      // Live POI markers — show where the current autopilot is on each curve.
+      ctx2.fillText('start', padL + 2, padT + plotH + 7);
+      const arrTxt = 'arrive';
+      ctx2.fillText(arrTxt, padL + plotW - ctx2.measureText(arrTxt).width - 2, padT + plotH + 7);
+      // Phase tick marks at A and B (cruise band).
+      ctx2.strokeStyle = muted;
+      ctx2.setLineDash([2, 4]);
+      ctx2.beginPath();
+      ctx2.moveTo(padL + A * plotW, padT);
+      ctx2.lineTo(padL + A * plotW, padT + plotH);
+      ctx2.moveTo(padL + B * plotW, padT);
+      ctx2.lineTo(padL + B * plotW, padT + plotH);
+      ctx2.stroke();
+      ctx2.setLineDash([]);
+      // Live POI marker — vertical line at current trip position.
       if (autopilotTarget && autopilotActive) {
         const tdx0 = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
         const tdy0 = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
@@ -915,29 +919,29 @@
         const aMul = autoApproachFor(autopilotTarget.type);
         const cThr = aRad * aMul;
         const corridorAbs = cThr * corridor;
-        // Accel marker (orange): u = elapsed since travel start / accelTimeSec.
-        if (autopilotPhase === 'traveling') {
+        let uPos = 0;
+        if (autopilotPhase === 'lingering') {
+          uPos = 1;
+        } else if (distNow < corridorAbs) {
+          // Inside brake corridor — map to decel band [B, 1].
+          const inBrake = Math.max(0, Math.min(1, (corridorAbs - distNow) / (corridorAbs - cThr)));
+          uPos = B + inBrake * (1 - B);
+        } else {
+          // Accel/cruise — map elapsed travel time onto [0, B].
           const elapsed = tAnimSec - autopilotTravelStart;
           const uA = Math.max(0, Math.min(1, elapsed / Math.max(1e-3, autoCfg.accelTimeSec)));
-          const easeA = Math.pow(uA, aPow);
-          const xA = padL + uA * plotW;
-          const yA = padT + plotH * (1 - easeA);
-          ctx2.fillStyle = '#f7a23a';
-          ctx2.beginPath();
-          ctx2.arc(xA, yA, 4, 0, Math.PI * 2);
-          ctx2.fill();
+          if (uA < 1) uPos = uA * A;        // still in accel band
+          else uPos = A + 0.5 * (B - A);    // assume mid-cruise (no fixed cruise time)
         }
-        // Decel marker (blue): u = how far into corridor (0 at entry, 1 at threshold).
-        if (distNow < corridorAbs && distNow > cThr) {
-          const uD = Math.max(0, Math.min(1, (corridorAbs - distNow) / (corridorAbs - cThr)));
-          const easeD = Math.pow(1 - uD, dPow);
-          const xD = padL + uD * plotW;
-          const yD = padT + plotH * (1 - easeD);
-          ctx2.fillStyle = accent;
-          ctx2.beginPath();
-          ctx2.arc(xD, yD, 4, 0, Math.PI * 2);
-          ctx2.fill();
-        }
+        const xMark = padL + uPos * plotW;
+        ctx2.strokeStyle = '#f7a23a';
+        ctx2.lineWidth = 2;
+        ctx2.beginPath();
+        ctx2.moveTo(xMark, padT);
+        ctx2.lineTo(xMark, padT + plotH);
+        ctx2.stroke();
+        ctx2.fillStyle = '#f7a23a';
+        ctx2.fillText('POI', xMark + 3, padT + 9);
       }
     }
     function clearDebugRows() {
