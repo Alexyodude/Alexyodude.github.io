@@ -811,6 +811,10 @@
       deepOutputEl.textContent = lines.join('\n');
     }
     setInterval(renderDeepDebug, 100);
+    // Live curve marker refresh — only when the debug panel is actually open.
+    setInterval(() => {
+      if (debugPanel && !debugPanel.classList.contains('hidden')) drawDecelCurve();
+    }, 100);
     const btnDebugClose = document.getElementById('debug-close');
     const btnDebugReset = document.getElementById('debug-reset');
     const btnDebugCopy = document.getElementById('debug-copy');
@@ -859,7 +863,10 @@
       ctx2.stroke();
       ctx2.setLineDash([]);
       const SAMPLES = 80;
-      // Accel curve (orange) — left to right, drift → warp over accelTimeSec.
+      // Y axis: speed (top = warp, bottom = drift).
+      // Accel (orange) goes bottom-left → top-right: speed climbs over time.
+      // Decel (blue) goes top-left → bottom-right: speed drops over distance
+      // into the brake corridor. The two curves cross to form an X.
       ctx2.strokeStyle = '#f7a23a';
       ctx2.lineWidth = 1.5;
       ctx2.beginPath();
@@ -872,13 +879,14 @@
         else ctx2.lineTo(x, y);
       }
       ctx2.stroke();
-      // Decel curve (accent blue) — right to left, warp at corridor → drift at threshold.
       ctx2.strokeStyle = accent;
       ctx2.lineWidth = 1.5;
       ctx2.beginPath();
       for (let i = 0; i <= SAMPLES; i++) {
         const u = i / SAMPLES;
-        const ease = Math.pow(u, dPow);
+        // Decel runs in reverse — at u=0 we're at corridor entry with full
+        // warp, at u=1 we're at threshold with drift speed.
+        const ease = Math.pow(1 - u, dPow);
         const x = padL + u * plotW;
         const y = padT + plotH * (1 - ease);
         if (i === 0) ctx2.moveTo(x, y);
@@ -887,16 +895,50 @@
       ctx2.stroke();
       ctx2.fillStyle = muted;
       ctx2.font = '9px ui-monospace, monospace';
-      ctx2.fillText('threshold', padL + 2, padT + plotH - 2);
-      const rTxt = 'corridor ' + corridor.toFixed(1) + '×';
-      ctx2.fillText(rTxt, padL + plotW - ctx2.measureText(rTxt).width - 2, padT + plotH - 2);
       ctx2.fillText('warp', padL + 2, padT + 9);
-      ctx2.fillText('drift', padL + plotW - ctx2.measureText('drift').width - 2, padT + 9);
+      ctx2.fillText('drift', padL + 2, padT + plotH - 2);
+      const rTxt = 'corridor ' + corridor.toFixed(1) + '×';
+      ctx2.fillText(rTxt, padL + plotW - ctx2.measureText(rTxt).width - 2, padT + 9);
+      ctx2.fillText('threshold', padL + plotW - ctx2.measureText('threshold').width - 2, padT + plotH - 2);
       ctx2.fillStyle = '#f7a23a';
       ctx2.fillText('accel', padL + 2, padT + 20);
       ctx2.fillStyle = accent;
       const dTxt = 'decel';
       ctx2.fillText(dTxt, padL + plotW - ctx2.measureText(dTxt).width - 2, padT + 20);
+      // Live POI markers — show where the current autopilot is on each curve.
+      if (autopilotTarget && autopilotActive) {
+        const tdx0 = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
+        const tdy0 = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
+        const tdz0 = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
+        const distNow = Math.sqrt(tdx0*tdx0 + tdy0*tdy0 + tdz0*tdz0);
+        const aRad = autopilotTarget.physRadius || 1e9;
+        const aMul = autoApproachFor(autopilotTarget.type);
+        const cThr = aRad * aMul;
+        const corridorAbs = cThr * corridor;
+        // Accel marker (orange): u = elapsed since travel start / accelTimeSec.
+        if (autopilotPhase === 'traveling') {
+          const elapsed = tAnimSec - autopilotTravelStart;
+          const uA = Math.max(0, Math.min(1, elapsed / Math.max(1e-3, autoCfg.accelTimeSec)));
+          const easeA = Math.pow(uA, aPow);
+          const xA = padL + uA * plotW;
+          const yA = padT + plotH * (1 - easeA);
+          ctx2.fillStyle = '#f7a23a';
+          ctx2.beginPath();
+          ctx2.arc(xA, yA, 4, 0, Math.PI * 2);
+          ctx2.fill();
+        }
+        // Decel marker (blue): u = how far into corridor (0 at entry, 1 at threshold).
+        if (distNow < corridorAbs && distNow > cThr) {
+          const uD = Math.max(0, Math.min(1, (corridorAbs - distNow) / (corridorAbs - cThr)));
+          const easeD = Math.pow(1 - uD, dPow);
+          const xD = padL + uD * plotW;
+          const yD = padT + plotH * (1 - easeD);
+          ctx2.fillStyle = accent;
+          ctx2.beginPath();
+          ctx2.arc(xD, yD, 4, 0, Math.PI * 2);
+          ctx2.fill();
+        }
+      }
     }
     function clearDebugRows() {
       if (!debugRowsEl) return;
