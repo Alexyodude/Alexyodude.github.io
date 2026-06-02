@@ -1556,15 +1556,43 @@
                 nearestRThisFrame = obj.physRadius || 1e6;
               }
               if (d2 > renderD2) continue;
-              // World-relative offset → camera-local (right, -up, forward).
-              // Negate the up dot product because screen Y points down.
-              const lx = ox * rx + oy * ry + oz * rz;
-              const ly = -(ox * ux + oy * uy + oz * uz);
-              const lz = ox * fx + oy * fy + oz * fz;
-              // Relativistic aberration applied in camera frame.
-              const [aox, aoy, aoz, cosTp] = aberrate(lx, ly, lz, beta);
+              // Relativistic aberration in the VELOCITY frame (not camera frame).
+              // We rotate the source direction around the perpendicular plane to
+              // velocity by the aberration angle, then project the aberrated
+              // direction into camera-local axes for the screen projection.
+              const oMagFull = Math.sqrt(d2) || 1;
+              let abX = ox, abY = oy, abZ = oz;
+              let cosTvelLocal;
+              if (haveVel && beta >= 0.005) {
+                const nx = ox / oMagFull, ny = oy / oMagFull, nz = oz / oMagFull;
+                cosTvelLocal = nx * vUx + ny * vUy + nz * vUz;
+                const cosTp = (cosTvelLocal + beta) / (1 + beta * cosTvelLocal);
+                const sinTp = Math.sqrt(Math.max(0, 1 - cosTp * cosTp));
+                // perpendicular to v̂ in the rest-frame source direction
+                const pX = nx - cosTvelLocal * vUx;
+                const pY = ny - cosTvelLocal * vUy;
+                const pZ = nz - cosTvelLocal * vUz;
+                const pMag = Math.sqrt(pX * pX + pY * pY + pZ * pZ);
+                let phx = 0, phy = 0, phz = 0;
+                if (pMag > 1e-9) { phx = pX / pMag; phy = pY / pMag; phz = pZ / pMag; }
+                const napX = cosTp * vUx + sinTp * phx;
+                const napY = cosTp * vUy + sinTp * phy;
+                const napZ = cosTp * vUz + sinTp * phz;
+                abX = napX * oMagFull;
+                abY = napY * oMagFull;
+                abZ = napZ * oMagFull;
+              } else {
+                cosTvelLocal = haveVel ? (ox * vUx + oy * vUy + oz * vUz) / oMagFull : 0;
+              }
+              // Project aberrated direction into camera-local axes for screen.
+              const lx = abX * rx + abY * ry + abZ * rz;
+              const ly = -(abX * ux + abY * uy + abZ * uz);
+              const aoz = abX * fx + abY * fy + abZ * fz;
               if (aoz <= 1e6) continue;
-              const proj = project(aox, aoy, aoz);
+              // cosTp here is the LEGACY camera-forward cosine (kept for
+              // dot-star brightness boost where it matters less than Doppler).
+              const cosTp = aoz / Math.sqrt(lx * lx + ly * ly + aoz * aoz);
+              const proj = project(lx, ly, aoz);
               if (!proj) continue;
               if (proj.px < -50 || proj.px > W + 50 || proj.py < -50 || proj.py > H + 50) continue;
 
@@ -1580,11 +1608,8 @@
               // a nebula sorts in front of the nebula correctly.
               const r3d = obj.physRadius || 0;
               const sortDepth = Math.max(1, aoz - r3d);
-              // Velocity-aligned cosine for Doppler: cos(angle between source
-              // direction and velocity). cosTvel > 0 → source in motion direction
-              // → blueshift; cosTvel < 0 → behind us → redshift.
-              const oMag = Math.sqrt(d2) || 1;
-              const cosTvel = haveVel ? (ox * vUx + oy * vUy + oz * vUz) / oMag : 0;
+              // Reuse the velocity-frame cosine computed for aberration.
+              const cosTvel = cosTvelLocal;
               if (obj.type === 'star' || obj.type === 'planet') {
                 drawList.push({ type: obj.type, obj, proj, depth, cosTp, cosTvel, sortDepth });
               } else if (obj.type === 'nebula') {
@@ -1711,7 +1736,11 @@
               cr = (dop >> 16) & 0xff;
               cg = (dop >> 8) & 0xff;
               cb = dop & 0xff;
-              a = Math.min(1, a * Math.min(8, D * D * D));
+              // Beaming brightness factor with a floor — redshifted stars dim
+              // proportionally to D³ but never fall below 30% so they remain
+              // visibly red instead of vanishing.
+              const beam = Math.max(0.3, Math.min(8, D * D * D));
+              a = Math.min(1, a * beam);
             }
             if (dark) {
               drawStar(proj.px, proj.py, `${cr},${cg},${cb}`, a, size);
