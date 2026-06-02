@@ -334,55 +334,79 @@
     let autopilotOrigDist = 0;    // dist to current target at travel start (used by debug curve marker)
     let autopilotBrakeStart = -1; // wall-clock sec when camera first crossed into the brake corridor (-1 = not braking yet)
     let autopilotStartVel = 0;    // |v| at travel start — ramp begins from here so trips smoothly connect to the previous arrival
+    let autopilotBrakeStartVel = 0; // |v| at corridor entry — used as the top of the time-based decel curve
+    let autopilotEffectiveCorridor = 0; // corridor radius for this trip, auto-grown to fit the time-based brake
     const autopilotVelHistory = []; // [{t, v}] samples since travel start, drawn as the actual-velocity overlay on the debug curve
     const VEL_HISTORY_LIMIT = 1024;
     let autopilotExpectedAccel = 0;    // sec spent in accel band (constant: accelTimeSec)
     let autopilotExpectedCruise = 0;   // sec spent cruising at maxW
     let autopilotExpectedDecel = 0;    // sec spent decelerating across corridor
     let autopilotExpectedDuration = 1; // sum — used as the timeline x-axis length
+    function computeEffectiveCorridor(target) {
+      // Brake distance under the time-based curve:
+      //   ∫₀^tDecel  designSp + (vTop - designSp) · (1 - u)^decelPower  du
+      // = tDecel · (designSp + (vTop - designSp) / (decelPower + 1))
+      // We grow the corridor to fit this so the curve actually has room.
+      const aRad = target.physRadius || 1e9;
+      const cThr = aRad * autoApproachFor(target.type);
+      const baseCorridor = cThr * autoCfg.decelCorridorMul;
+      const offset = Math.max(0.05, Math.min(1, autoCfg.warpCurveOffset || 1));
+      const maxW = Math.pow(10, autoCfg.maxWarpExp) * offset;
+      const designSp = cThr / Math.max(0.1, (autoCfg.linger * autoCfg.designSpeedDivisor));
+      const tDecel = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
+      const dPow = Math.max(1, autoCfg.decelPower);
+      const brakeDist = tDecel * (designSp + (maxW - designSp) / (dPow + 1));
+      return Math.max(baseCorridor, cThr + brakeDist);
+    }
     function recomputeTripEstimate() {
       if (!autopilotTarget) { autopilotExpectedDuration = 1; return; }
       const aRad = autopilotTarget.physRadius || 1e9;
       const aMul = autoApproachFor(autopilotTarget.type);
       const cThr = aRad * aMul;
-      const corridor = cThr * autoCfg.decelCorridorMul;
+      const corridor = autopilotEffectiveCorridor > 0
+        ? autopilotEffectiveCorridor
+        : computeEffectiveCorridor(autopilotTarget);
       const offset = Math.max(0.05, Math.min(1, autoCfg.warpCurveOffset || 1));
       const maxW = Math.pow(10, autoCfg.maxWarpExp) * offset;
       const maxWAbs = Math.pow(10, autoCfg.maxWarpExp);
       const designSp = cThr / Math.max(0.1, (autoCfg.linger * autoCfg.designSpeedDivisor));
       const aT = Math.max(0.05, autoCfg.accelTimeSec);
       const aPow = autoCfg.accelPower;
-      const dPow = autoCfg.decelPower;
+      const dPow = Math.max(1, autoCfg.decelPower);
       const tDecel = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
       const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
       const cruiseHold = Math.max(0, autoCfg.cruiseMinSec || 0);
-      // Numerical simulation mirroring the travel-branch physics — gives an
-      // accurate expectedDuration so the time-linear marker advances at the
-      // real per-second rate and lands at uPos=1 exactly on arrival.
       const simDt = 1 / 60;
       let simDist = autopilotOrigDist;
       let simT = 0;
       let brakeStart = -1;
+      let brakeStartVel = 0;
       let accelEndT = 0;
       let cruiseEndT = 0;
       let extraCruise = cruiseHold;
-      const maxIter = Math.ceil(60 * 60); // cap at 60 sec sim
+      let lastMag = autopilotStartVel || 0;
+      const maxIter = Math.ceil(60 * 60);
       for (let i = 0; i < maxIter; i++) {
         if (simDist <= cThr) break;
         const inCorridor = simDist < corridor;
-        if (inCorridor && brakeStart < 0) { brakeStart = simT; cruiseEndT = simT; }
+        if (inCorridor && brakeStart < 0) { brakeStart = simT; cruiseEndT = simT; brakeStartVel = lastMag; }
         const sinceCorridor = brakeStart >= 0 ? simT - brakeStart : 0;
         const inDelay = inCorridor && sinceCorridor < decelDelay;
         const remaining = Math.max(simDist - cThr, cThr * 0.05);
-        const capFactor = (inCorridor && !inDelay) ? (1 - Math.exp(-3 * simDt / tDecel)) : 0.5;
-        const stableCap = remaining * capFactor / simDt;
-        let decelFloor;
-        if (inDelay) decelFloor = maxW;
-        else if (inCorridor) {
-          const t = Math.max(0, Math.min(1, (simDist - cThr) / (corridor - cThr)));
-          decelFloor = designSp + (maxW - designSp) * Math.pow(t, dPow);
-        } else decelFloor = maxW;
-        const baseSpeed = Math.min(decelFloor, maxWAbs, stableCap);
+        const safetyCap = remaining / simDt;
+        let baseSpeed;
+        if (!inCorridor) {
+          baseSpeed = Math.min(maxWAbs, remaining * 0.5 / simDt);
+        } else if (inDelay) {
+          baseSpeed = Math.min(maxWAbs, remaining * 0.5 / simDt);
+        } else {
+          const brakeT = sinceCorridor - decelDelay;
+          const brakeU = Math.max(0, Math.min(1, brakeT / tDecel));
+          const ease = Math.pow(1 - brakeU, dPow);
+          const vTop = Math.max(designSp, brakeStartVel);
+          const curveVel = designSp + (vTop - designSp) * ease;
+          baseSpeed = Math.min(curveVel, safetyCap);
+        }
         let mag;
         if (!inCorridor) {
           const accelU = Math.max(0, Math.min(1, simT / aT));
@@ -390,11 +414,11 @@
           const accelEase = Math.pow(accelU, aPow);
           const rampFloor = Math.min(autopilotStartVel || 0, baseSpeed);
           const rampedTarget = rampFloor + (baseSpeed - rampFloor) * accelEase;
-          mag = Math.min(rampedTarget, baseSpeed);
+          mag = Math.min(Math.min(rampedTarget, baseSpeed), maxW);
         } else {
           mag = baseSpeed;
         }
-        // Inject cruise hold once accel completes and before corridor entry.
+        lastMag = mag;
         if (!inCorridor && accelEndT > 0 && extraCruise > 0) {
           const consume = Math.min(simDt, extraCruise);
           simT += consume;
@@ -1969,6 +1993,7 @@
           autopilotPhase = 'traveling';
           autopilotTravelStart = tAnimSec;
           autopilotBrakeStart = -1;
+          autopilotBrakeStartVel = 0;
           autopilotStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
           autopilotVelHistory.length = 0;
           if (!autopilotTarget) return;
@@ -1977,6 +2002,7 @@
           const _ady = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
           const _adz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
           autopilotOrigDist = Math.sqrt(_adx*_adx + _ady*_ady + _adz*_adz);
+          autopilotEffectiveCorridor = computeEffectiveCorridor(autopilotTarget);
           recomputeTripEstimate();
           snapAimToCurrentTarget();
         }
@@ -2019,12 +2045,14 @@
                 autopilotPhase = 'traveling';
                 autopilotTravelStart = tAnimSec;
                 autopilotBrakeStart = -1;
+                autopilotBrakeStartVel = 0;
                 autopilotStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
                 autopilotVelHistory.length = 0;
                 const _hdx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
                 const _hdy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
                 const _hdz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
                 autopilotOrigDist = Math.sqrt(_hdx*_hdx + _hdy*_hdy + _hdz*_hdz);
+                autopilotEffectiveCorridor = computeEffectiveCorridor(autopilotTarget);
                 recomputeTripEstimate();
                 snapAimToCurrentTarget();
               } else {
@@ -2097,32 +2125,46 @@
               // log-decay from corridor width down to 5% in decelTimeSec.
               // This makes the brake long enough to be visible on the timeline
               // instead of vanishing in ~0.1s.
-              const corridorAbsLocal = closeThreshold * autoCfg.decelCorridorMul;
+              // Effective corridor for this trip — grown so the time-based
+              // brake curve actually fits (computed at travel start, stable
+              // for the whole trip).
+              const corridorAbsLocal = autopilotEffectiveCorridor > 0
+                ? autopilotEffectiveCorridor
+                : closeThreshold * autoCfg.decelCorridorMul;
               const tDecel = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
               const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
+              const dPow = Math.max(1, autoCfg.decelPower);
               const inCorridor = dist < corridorAbsLocal;
-              if (inCorridor && autopilotBrakeStart < 0) autopilotBrakeStart = tAnimSec;
+              if (inCorridor && autopilotBrakeStart < 0) {
+                autopilotBrakeStart = tAnimSec;
+                autopilotBrakeStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+              }
               const sinceCorridor = autopilotBrakeStart >= 0 ? (tAnimSec - autopilotBrakeStart) : 0;
               const inDelay = inCorridor && sinceCorridor < decelDelay;
               const remaining = Math.max(dist - closeThreshold, closeThreshold * 0.05);
-              // Inside corridor + past the delay → log-decay sized to converge
-              //   in decelTimeSec.
-              // Inside corridor during the delay → loose 0.5 factor so cruise
-              //   carries through. The trip estimate already accounts for the
-              //   extra delay time.
-              // Outside corridor → loose 0.5 factor (long cruise leg).
-              const capFactor = (inCorridor && !inDelay)
-                ? (1 - Math.exp(-3 * dt / tDecel))
-                : 0.5;
-              const stableCap = remaining * capFactor / Math.max(dt, 1e-6);
-              // During the delay window, ignore decelSpeed's brake easing — we
-              // want to keep cruising at warp. stableCap above is loose enough
-              // to allow it without overshoot (corridor entry is still far
-              //   enough that 0.5×remaining/dt > maxW).
-              const decelFloor = inDelay
-                ? Math.pow(10, autoCfg.maxWarpExp)
-                : decelSpeed(dist, designSpeed, closeThreshold);
-              const baseSpeed = Math.min(decelFloor, Math.pow(10, autoCfg.maxWarpExp), stableCap);
+              // Safety cap so per-frame motion never exceeds remaining distance.
+              const safetyCap = remaining / Math.max(dt, 1e-6);
+              let baseSpeed;
+              if (!inCorridor) {
+                // Cruise: loose stableCap (0.5 × remaining/dt) bounds peak.
+                const stableCap = remaining * 0.5 / Math.max(dt, 1e-6);
+                baseSpeed = Math.min(Math.pow(10, autoCfg.maxWarpExp), stableCap);
+              } else if (inDelay) {
+                // Decel delay — hold whatever cruise speed we entered at.
+                const cruiseCap = remaining * 0.5 / Math.max(dt, 1e-6);
+                baseSpeed = Math.min(Math.pow(10, autoCfg.maxWarpExp), cruiseCap);
+              } else {
+                // TIME-BASED BRAKE: velocity follows a (1 - u)^decelPower
+                // curve from brakeStartVel down to designSpeed over decelTimeSec.
+                // Mirrors the accel ramp on the other side, giving the user a
+                // symmetric bell curve with shape controlled by decelPower.
+                const brakeT = sinceCorridor - decelDelay;
+                const brakeU = Math.max(0, Math.min(1, brakeT / tDecel));
+                const ease = Math.pow(1 - brakeU, dPow);
+                const vTop = Math.max(designSpeed, autopilotBrakeStartVel);
+                const curveVel = designSpeed + (vTop - designSpeed) * ease;
+                baseSpeed = Math.min(curveVel, safetyCap);
+              }
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
               const tdx = dx / dn, tdy = dy / dn, tdz = dz / dn;
               // Speed-up curve: ease velocity from designSpeed up to baseSpeed
