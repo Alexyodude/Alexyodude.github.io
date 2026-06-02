@@ -1445,9 +1445,9 @@
               autopilotPhase = 'lingering';
               autopilotLingerStart = tAnimSec;
               prepareNextTarget();
-              velocity[0] = 0; velocity[1] = 0; velocity[2] = 0;
-              // Snap camera to face the body for the linger view (only place
-              // the camera rotates — travel itself is pure translation).
+              // Don't zero velocity — drift past at the current heading instead
+              // of dead-stop. The linger branch below will smoothly decay |v|
+              // toward designSpeed.
               snapAimToCurrentTarget();
             }
             if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > autoCfg.linger) {
@@ -1536,12 +1536,24 @@
               velocity[2] = tdz * smoothedMag;
               tvx = velocity[0]; tvy = velocity[1]; tvz = velocity[2];
             } else {
-              // Linger: hold position dead-still. Zero target velocity, no
-              // rotation. Body sits perfectly centred in view for the full
-              // linger window. At linger end we snap aim+velocity to next.
-              tvx = 0;
-              tvy = 0;
-              tvz = 0;
+              // Linger: drift past the body smoothly. Keep velocity along the
+              // current heading and ease its magnitude toward designSpeed
+              // (slow but non-zero) so the camera doesn't dead-stop — flying
+              // through space stays continuous.
+              const curMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+              const targetMag = designSpeed;
+              const lerp = Math.min(1, dt * autoCfg.accelRateUp);
+              const newMag = curMag + (targetMag - curMag) * lerp;
+              if (curMag > 1) {
+                velocity[0] = velocity[0] / curMag * newMag;
+                velocity[1] = velocity[1] / curMag * newMag;
+                velocity[2] = velocity[2] / curMag * newMag;
+              } else {
+                velocity[0] = fx * targetMag;
+                velocity[1] = fy * targetMag;
+                velocity[2] = fz * targetMag;
+              }
+              tvx = velocity[0]; tvy = velocity[1]; tvz = velocity[2];
             }
           }
           } // end of "else (autopilotTarget exists after handoff)"
