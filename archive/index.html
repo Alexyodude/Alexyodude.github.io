@@ -900,10 +900,15 @@
         }
         return null;
       }
-      // Single strict pass — POIs must be within the 30° forward cone.
-      // No fallback to wider cones (user wants future-cone-only targeting).
+      // Primary pass: strict forward cone (autoCfg.maxAngleChange). Then
+      // widen to keep the autopilot from stalling (velocity → 0) when the
+      // strict cone has nothing unvisited — broaden to ±90°, then ±180°.
       const strict = searchPass(autoCfg.maxAngleChange);
       if (strict) return strict;
+      const wide = searchPass(Math.PI * 0.5);
+      if (wide) return wide;
+      const anywhere = searchPass(Math.PI);
+      if (anywhere) return anywhere;
       return null;
     }
     document.querySelectorAll('.coord-visit').forEach((btn) => {
