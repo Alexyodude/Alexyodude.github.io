@@ -324,7 +324,7 @@
       decelPower: 3,               // ease exponent (1=linear, 2=quad, 3=cubic, 4=quart)
       designSpeedDivisor: 15,      // designSpeed = closeThreshold / (linger × this)
       velocityLerp: 4,             // velocity smoothing rate during autopilot (post-block low-pass)
-      maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this
+      maxWarpExp: 15,              // ceiling on autopilot warp speed in m/s = 10^this — 1e15 = ~3.3M·c (visible smooth motion, not teleport)
       maxAngleChange: 0.524,       // 30° — picker's preferred forward cone (widens on fallback)
       accelRateUp: 3.5,            // exponential rate when |v| is RISING toward baseSpeed (gentle ramp-up after handoff)
     };
@@ -1776,11 +1776,11 @@
               //     classic drift. baseSpeed is shrunk early by decelSpeed
               //     across the corridor, so an instant cap there gives a
               //     gradual visible slowdown without overshoot.
-              // Stability clamp: never let velocity*dt exceed the remaining
-              // distance, otherwise the camera teleports past the body in one
-              // frame and oscillates around it forever (closeThreshold is tiny
-              // compared to maxWarp × dt).
-              const stableCap = (dist / Math.max(dt, 1e-6)) * 0.5;
+              // Stability clamp: per-frame motion ≤ 10% of remaining distance.
+              // Tighter than 0.5 so the approach is smooth and visible rather
+              // than a single-frame teleport. With 60–180 fps the camera
+              // converges to closeThreshold in ~22–60 frames (0.1–0.3 s).
+              const stableCap = (dist / Math.max(dt, 1e-6)) * 0.1;
               const baseSpeed = Math.min(decelSpeed(dist, designSpeed, closeThreshold), Math.pow(10, autoCfg.maxWarpExp), stableCap);
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
               const tdx = dx / dn, tdy = dy / dn, tdz = dz / dn;
