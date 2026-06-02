@@ -1691,9 +1691,9 @@
           autopilotTravelStart = tAnimSec;
           if (!autopilotTarget) return;
           computeFlyByOffset(autopilotTarget, autopilotOffset);
-          // No snap — rotation is smooth and continuous via aimAndMove during
-          // travel. The picker has already enforced a small max angle so the
-          // rotation finishes within a fraction of a second at aimAngularVel.
+          // Snap camera to face the first target so the user is looking
+          // straight at it instead of off into empty +Z direction.
+          snapAimToCurrentTarget();
         }
         function prepareNextTarget() {
           if (nextAutopilotTarget) return;
