@@ -322,6 +322,7 @@
     let autopilotPhase = 'searching'; // 'traveling' | 'lingering' | 'searching'
     let autopilotLingerStart = 0;
     let autopilotTravelStart = 0; // wall-clock sec when current travel began (for max-rotate-time cap)
+    let autopilotOrigDist = 0;    // dist to current target at travel start (used by debug curve marker)
     const autopilotOffset = [0, 0, 0]; // perpendicular fly-by offset (so we pass on the side)
     const nextAutopilotOffset = [0, 0, 0]; // fly-by offset for the queued next target
     const autopilotVisited = []; // ring buffer of recent target keys to avoid loops
@@ -341,6 +342,7 @@
       maxAngleChange: 0.524,       // 30° — picker's preferred forward cone (widens on fallback)
       accelTimeSec: 1.0,           // seconds to ramp from designSpeed up to baseSpeed at travel start
       accelPower: 2,               // ramp curve exponent (1=linear, 2=ease-in quad, 3=cubic, 4=quart)
+      flybyOffset: 0,              // perpendicular fly-by offset, in multiples of closeThreshold (0 = head-on, 2 = pass at 2× approach radius)
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -881,6 +883,7 @@
       { key: 'maxAngleChange',      label: 'max Δangle rad',min: 0.05, max: Math.PI, step: 0.05 },
       { key: 'accelTimeSec',        label: 'accel time (s)',min: 0.1,  max: 6,   step: 0.1 },
       { key: 'accelPower',          label: 'accel curve',   min: 1,    max: 6,   step: 0.1 },
+      { key: 'flybyOffset',         label: 'flyby offset×', min: 0,    max: 8,   step: 0.1 },
     ];
     function fmtVal(v) {
       return Number.isInteger(v) ? String(v) : (Math.round(v * 100) / 100).toString();
@@ -978,11 +981,20 @@
           const inBrake = Math.max(0, Math.min(1, (corridorAbs - distNow) / (corridorAbs - cThr)));
           uPos = B + inBrake * (1 - B);
         } else {
-          // Accel/cruise — map elapsed travel time onto [0, B].
+          // Accel band [0,A]: time-based ramp using accelTimeSec.
+          // Cruise band [A,B]: slide continuously based on distance covered
+          // since travel started — no jump when accel saturates.
           const elapsed = tSecNow - autopilotTravelStart;
           const uA = Math.max(0, Math.min(1, elapsed / Math.max(1e-3, autoCfg.accelTimeSec)));
-          if (uA < 1) uPos = uA * A;        // still in accel band
-          else uPos = A + 0.5 * (B - A);    // assume mid-cruise (no fixed cruise time)
+          if (uA < 1) {
+            uPos = uA * A;
+          } else if (autopilotOrigDist > corridorAbs) {
+            const cruiseProgress = Math.max(0, Math.min(1, (autopilotOrigDist - distNow) / (autopilotOrigDist - corridorAbs)));
+            uPos = A + cruiseProgress * (B - A);
+          } else {
+            // origDist was already inside corridor at travel start — just sit at A.
+            uPos = A;
+          }
         }
         const xMark = padL + uPos * plotW;
         ctx2.strokeStyle = '#f7a23a';
@@ -1759,13 +1771,30 @@
       let autopilotActive = false;
       if (autopilot) {
         function computeFlyByOffset(target, outOffset) {
-          // No offset — aim straight at the body centre. Travel decelerates so
-          // we stop at the approach distance, no fly-by needed. This keeps the
-          // body centred during approach (no apparent rotation of the body
-          // across the screen as we close in).
-          outOffset[0] = 0;
-          outOffset[1] = 0;
-          outOffset[2] = 0;
+          // Perpendicular fly-by offset, in multiples of closeThreshold. 0 =
+          // head-on (body stays centred during approach); larger values push
+          // the aim-point sideways so we fly past instead of head-on.
+          const mag = autoCfg.flybyOffset || 0;
+          if (mag <= 0) { outOffset[0] = 0; outOffset[1] = 0; outOffset[2] = 0; return; }
+          const dxT = target.wx - cam[0];
+          const dyT = target.wy - cam[1];
+          const dzT = target.wz - cam[2];
+          const dn = Math.sqrt(dxT*dxT + dyT*dyT + dzT*dzT) || 1;
+          const fxT = dxT/dn, fyT = dyT/dn, fzT = dzT/dn;
+          // Perpendicular = forward × world-up. If forward is collinear with
+          // up, fall back to world-X axis to avoid a zero cross-product.
+          let pxN = fzT, pyN = 0, pzN = -fxT; // forward × (0,1,0)
+          const pn = Math.sqrt(pxN*pxN + pyN*pyN + pzN*pzN);
+          if (pn < 1e-6) { pxN = 0; pyN = 1; pzN = 0; }
+          else { pxN /= pn; pyN /= pn; pzN /= pn; }
+          // Hash the target so the offset side is deterministic but varies
+          // between bodies (avoids systematic always-left fly-bys).
+          const sign = ((target.wx + target.wy + target.wz) | 0) % 2 === 0 ? 1 : -1;
+          const cThr = (target.physRadius || 1e9) * autoApproachFor(target.type);
+          const off = mag * cThr * sign;
+          outOffset[0] = pxN * off;
+          outOffset[1] = pyN * off;
+          outOffset[2] = pzN * off;
         }
         function snapAimToCurrentTarget() {
           if (!autopilotTarget) return;
@@ -1797,8 +1826,10 @@
           autopilotTravelStart = tAnimSec;
           if (!autopilotTarget) return;
           computeFlyByOffset(autopilotTarget, autopilotOffset);
-          // Snap camera to face the first target so the user is looking
-          // straight at it instead of off into empty +Z direction.
+          const _adx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
+          const _ady = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
+          const _adz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
+          autopilotOrigDist = Math.sqrt(_adx*_adx + _ady*_ady + _adz*_adz);
           snapAimToCurrentTarget();
         }
         function prepareNextTarget() {
@@ -1839,9 +1870,10 @@
                 nextAutopilotTarget = null;
                 autopilotPhase = 'traveling';
                 autopilotTravelStart = tAnimSec;
-                // Snap camera to face the next POI so we travel TOWARD it
-                // while LOOKING AT it, not still looking back at the body we
-                // just left.
+                const _hdx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
+                const _hdy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
+                const _hdz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
+                autopilotOrigDist = Math.sqrt(_hdx*_hdx + _hdy*_hdy + _hdz*_hdz);
                 snapAimToCurrentTarget();
               } else {
                 acquireNewTarget();
