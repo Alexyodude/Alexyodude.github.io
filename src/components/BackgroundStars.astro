@@ -58,6 +58,7 @@
     <canvas id="debug-curve-canvas" width="220" height="80"></canvas>
   </div>
   <div class="debug-actions">
+    <button type="button" id="debug-next-poi">Next POI</button>
     <button type="button" id="debug-reset">Reset</button>
     <button type="button" id="debug-copy">Copy config</button>
     <button type="button" id="debug-close">Close</button>
@@ -406,7 +407,7 @@
       approachStar: 18,
       approachBlackhole: 50,
       decelCorridorMul: 4,         // brake corridor — slowdown only kicks in inside threshold × this
-      decelPower: 2.5,             // ease exponent — values > 1 give a fast initial decel that ramps down toward proximity
+      decelPower: 4,               // ease exponent — high values give a sharp initial decel that ramps down toward proximity
       designSpeedDivisor: 15,      // designSpeed = closeThreshold / (linger × this)
       velocityLerp: 4,             // velocity smoothing rate during autopilot (post-block low-pass)
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this — 1e18 = ~3.3B·c (smoothness guaranteed by multiplicative ramp + stableCap)
@@ -427,6 +428,7 @@
       preSearchDelaySec: 1.5,      // seconds of linger to warp before searching for the next POI
     };
     let autopilotTripTargetSec = 5; // randomized per trip (autoCfg.tripTimeMin..tripTimeMax)
+    let autopilotForceRefresh = false; // set true from debug panel "Next POI" button
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
       if (type === 'star') return autoCfg.approachStar;
@@ -951,6 +953,7 @@
     const btnDebugClose = document.getElementById('debug-close');
     const btnDebugReset = document.getElementById('debug-reset');
     const btnDebugCopy = document.getElementById('debug-copy');
+    const btnDebugNextPoi = document.getElementById('debug-next-poi');
     const debugCanvas = document.getElementById('debug-curve-canvas');
     const debugDefaults = JSON.parse(JSON.stringify(autoCfg));
     const debugGroups = [
@@ -1188,6 +1191,9 @@
       buildDebugRows();
       recomputeTripEstimate();
       drawDecelCurve();
+    });
+    if (btnDebugNextPoi) btnDebugNextPoi.addEventListener('click', () => {
+      autopilotForceRefresh = true;
     });
     if (btnDebugCopy) btnDebugCopy.addEventListener('click', async () => {
       const snippet = 'const autoCfg = ' + JSON.stringify(autoCfg, null, 2)
@@ -1979,6 +1985,14 @@
           if (nextAutopilotTarget) return;
           nextAutopilotTarget = findNextAutopilotPOI();
           if (nextAutopilotTarget) computeFlyByOffset(nextAutopilotTarget, nextAutopilotOffset);
+        }
+        if (autopilotForceRefresh) {
+          // Debug "Next POI" button — drop the current target so the picker
+          // grabs a fresh one immediately (skipping linger).
+          autopilotForceRefresh = false;
+          autopilotTarget = null;
+          nextAutopilotTarget = null;
+          autopilotPhase = 'searching';
         }
         if (!autopilotTarget) acquireNewTarget();
         if (autopilotTarget) {
