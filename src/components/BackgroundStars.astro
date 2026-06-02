@@ -1733,7 +1733,10 @@
                 nextAutopilotTarget = null;
                 autopilotPhase = 'traveling';
                 autopilotTravelStart = tAnimSec;
-                // No snap — rotation is smooth and continuous via aimAndMove.
+                // Snap camera to face the next POI so we travel TOWARD it
+                // while LOOKING AT it, not still looking back at the body we
+                // just left.
+                snapAimToCurrentTarget();
               } else {
                 acquireNewTarget();
               }
