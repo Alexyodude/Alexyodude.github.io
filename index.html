@@ -64,9 +64,9 @@
       const designSp = cThr / Math.max(0.1, (autoCfg.linger * autoCfg.designSpeedDivisor));
       const aT = Math.max(0.05, autoCfg.accelTimeSec);
       const dAccel = aT * (designSp + (maxW - designSp) / (autoCfg.accelPower + 1));
-      const dCorridor = Math.max(0, corridor - cThr);
-      const avgDecel = (maxW + designSp * autoCfg.decelPower) / (autoCfg.decelPower + 1);
-      const tDecel = avgDecel > 1 ? dCorridor / avgDecel : 0;
+      // Brake is stableCap-driven and converges in ~decelTimeSec by design.
+      // (See stableCap formula in the travel block.)
+      const tDecel = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
       const dCruise = Math.max(0, autopilotOrigDist - corridor - dAccel);
       const tCruise = (maxW > 1 ? dCruise / maxW : 0) + Math.max(0, autoCfg.cruiseMinSec || 0);
       const tDecelTotal = tDecel + Math.max(0, autoCfg.decelOffsetSec || 0);
@@ -102,6 +102,7 @@
       arrivalHoldSec: 0,           // hold motionless at arrival for N sec before drifting (a dramatic "we're here" pause)
       arrivalLookAtBody: 0,        // 0..1 — how strongly camera tracks the body during linger (0 = none, 1 = locked)
       arrivalSettleRate: 4,        // exponential rate for lookAtBody yaw/pitch tracking (higher = snappier)
+      decelTimeSec: 0.6,           // target brake duration — stableCap inside corridor is scaled to converge in this time (≥ 0.05s)
     };
     function autoApproachFor(type) {
       if (type === 'planet') return autoCfg.approachPlanet;
@@ -646,6 +647,7 @@
         { key: 'approachBlackhole',   label: 'approach BH',   min: 5,    max: 200, step: 1 },
         { key: 'decelCorridorMul',    label: 'decel corridor',min: 1.2,  max: 10,  step: 0.1 },
         { key: 'decelPower',          label: 'decel curve',   min: 1,    max: 6,   step: 0.1 },
+        { key: 'decelTimeSec',        label: 'brake time (s)',min: 0.1,  max: 5,   step: 0.1 },
         { key: 'decelOffsetSec',      label: 'decel delay (s)',min: 0,   max: 5,   step: 0.1 },
         { key: 'flybyOffset',         label: 'flyby offset×', min: 0,    max: 8,   step: 0.1 },
       ]},
@@ -1720,15 +1722,21 @@
               //     classic drift. baseSpeed is shrunk early by decelSpeed
               //     across the corridor, so an instant cap there gives a
               //     gradual visible slowdown without overshoot.
-              // Per-frame motion safety, always on: bound velocity so
-              // `velocity * dt ≤ 0.5 * (dist - closeThreshold)`. Gives an
-              // asymptotic glide toward closeThreshold without overshoot
-              // regardless of how far the target is. For long trips
-              // (dist - cThr > 2 * maxW * dt ≈ 3.3e16 m), stableCap exceeds
-              // maxW, so the ceiling actually limits — peak velocity hits
-              // the configured 1e18 m/s.
+              // Per-frame motion safety, always on. Outside the brake corridor:
+              // use 0.5× the remaining distance per frame (loose enough that
+              // peak velocity hits maxW on long cruises). Inside the corridor:
+              // pick a factor that converges to closeThreshold in decelTimeSec
+              // seconds — `factor = 1 - exp(-3·dt/decelTimeSec)` gives
+              // log-decay from corridor width down to 5% in decelTimeSec.
+              // This makes the brake long enough to be visible on the timeline
+              // instead of vanishing in ~0.1s.
+              const corridorAbsLocal = closeThreshold * autoCfg.decelCorridorMul;
               const remaining = Math.max(dist - closeThreshold, closeThreshold * 0.05);
-              const stableCap = remaining / Math.max(dt, 1e-6) * 0.5;
+              const tDecel = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
+              const capFactor = dist < corridorAbsLocal
+                ? (1 - Math.exp(-3 * dt / tDecel))
+                : 0.5;
+              const stableCap = remaining * capFactor / Math.max(dt, 1e-6);
               const baseSpeed = Math.min(decelSpeed(dist, designSpeed, closeThreshold), Math.pow(10, autoCfg.maxWarpExp), stableCap);
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
               const tdx = dx / dn, tdy = dy / dn, tdz = dz / dn;
