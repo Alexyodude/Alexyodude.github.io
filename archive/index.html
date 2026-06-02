@@ -728,7 +728,7 @@
       ctx2.fillText('start', padL + 2, padT + plotH + 7);
       const arrTxt = 'arrive';
       ctx2.fillText(arrTxt, padL + plotW - ctx2.measureText(arrTxt).width - 2, padT + plotH + 7);
-      // Phase tick marks at A and B (cruise band).
+      // Phase tick marks at A (accel→cruise) and B (cruise→decel).
       ctx2.strokeStyle = muted;
       ctx2.setLineDash([2, 4]);
       ctx2.beginPath();
@@ -738,6 +738,12 @@
       ctx2.lineTo(padL + B * plotW, padT + plotH);
       ctx2.stroke();
       ctx2.setLineDash([]);
+      ctx2.fillStyle = muted;
+      ctx2.font = '9px ui-monospace, monospace';
+      ctx2.fillText('cruise start', padL + A * plotW + 3, padT + plotH - 14);
+      const brakeLabel = 'brake start';
+      const brakeW = ctx2.measureText(brakeLabel).width;
+      ctx2.fillText(brakeLabel, padL + B * plotW - brakeW - 3, padT + plotH - 14);
       // Live POI marker — vertical line at current trip position.
       // Uses outer-scope state only; this runs from setInterval so locals
       // from the animation loop (autopilotActive / tAnimSec) aren't visible.
