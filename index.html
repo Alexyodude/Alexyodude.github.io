@@ -1515,7 +1515,12 @@
               //     classic drift. baseSpeed is shrunk early by decelSpeed
               //     across the corridor, so an instant cap there gives a
               //     gradual visible slowdown without overshoot.
-              const baseSpeed = Math.min(decelSpeed(dist, designSpeed, closeThreshold), Math.pow(10, autoCfg.maxWarpExp));
+              // Stability clamp: never let velocity*dt exceed the remaining
+              // distance, otherwise the camera teleports past the body in one
+              // frame and oscillates around it forever (closeThreshold is tiny
+              // compared to maxWarp × dt).
+              const stableCap = (dist / Math.max(dt, 1e-6)) * 0.5;
+              const baseSpeed = Math.min(decelSpeed(dist, designSpeed, closeThreshold), Math.pow(10, autoCfg.maxWarpExp), stableCap);
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
               const tdx = dx / dn, tdy = dy / dn, tdz = dz / dn;
               const currentMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
