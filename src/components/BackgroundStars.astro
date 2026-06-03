@@ -2905,17 +2905,101 @@
             const tex = getPlanetTexture(obj);
             ctx.drawImage(tex, proj.px - rad, proj.py - rad, rad * 2, rad * 2);
             applyDopplerTint(proj.px, proj.py, rad, cosTvel);
-            if (rad > 25 && (obj.kind === 'ocean' || obj.kind === 'gas_giant' || obj.kind === 'ice_giant' || obj.kind === 'shrouded')) {
-              const ar = Math.min(255, obj.cr + 60);
-              const ag = Math.min(255, obj.cg + 60);
-              const ab = Math.min(255, obj.cb + 60);
-              const limb = ctx.createRadialGradient(proj.px, proj.py, rad * 0.92, proj.px, proj.py, rad * 1.18);
-              limb.addColorStop(0,   `rgba(${ar},${ag},${ab},0)`);
-              limb.addColorStop(0.45,`rgba(${ar},${ag},${ab},0.4)`);
-              limb.addColorStop(1,   `rgba(${ar},${ag},${ab},0)`);
-              ctx.fillStyle = limb;
-              ctx.beginPath(); ctx.arc(proj.px, proj.py, rad * 1.18, 0, Math.PI * 2); ctx.fill();
+            const hasAtmos = obj.kind === 'ocean' || obj.kind === 'gas_giant' || obj.kind === 'ice_giant' || obj.kind === 'shrouded';
+            // Atmospheric glow (limb scattering) — stronger and more saturated
+            // than the previous gentle limb. Two-stop gradient with a tight
+            // bright rim then a wider outer haze.
+            if (rad > 15 && hasAtmos) {
+              const ar = Math.min(255, obj.cr + 80);
+              const ag = Math.min(255, obj.cg + 80);
+              const ab = Math.min(255, obj.cb + 80);
+              const rim = ctx.createRadialGradient(proj.px, proj.py, rad * 0.96, proj.px, proj.py, rad * 1.30);
+              rim.addColorStop(0,   `rgba(${ar},${ag},${ab},0)`);
+              rim.addColorStop(0.20,`rgba(${ar},${ag},${ab},0.65)`);
+              rim.addColorStop(0.50,`rgba(${ar},${ag},${ab},0.25)`);
+              rim.addColorStop(1,   `rgba(${ar},${ag},${ab},0)`);
+              ctx.fillStyle = rim;
+              ctx.beginPath(); ctx.arc(proj.px, proj.py, rad * 1.30, 0, Math.PI * 2); ctx.fill();
             }
+            // Day/night terminator — soft shadow on the side opposite the star
+            // (we don't track a real light source so just use a fixed phase
+            // derived from objHash for variety).
+            if (rad > 30) {
+              const phaseR = mulberry32(objHash(obj) + 0xab);
+              const phase = phaseR() * Math.PI * 2;
+              const sx = Math.cos(phase) * rad * 0.55;
+              const sy = Math.sin(phase) * rad * 0.55;
+              const shade = ctx.createRadialGradient(proj.px - sx, proj.py - sy, rad * 0.20, proj.px - sx, proj.py - sy, rad * 1.10);
+              shade.addColorStop(0, 'rgba(0,0,0,0)');
+              shade.addColorStop(0.65, 'rgba(0,0,0,0)');
+              shade.addColorStop(1, 'rgba(0,0,0,0.55)');
+              ctx.save();
+              ctx.beginPath(); ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2); ctx.clip();
+              ctx.fillStyle = shade;
+              ctx.fillRect(proj.px - rad, proj.py - rad, rad * 2, rad * 2);
+              ctx.restore();
+            }
+            // Gas-giant storm spots — a few oval cyclones at different
+            // latitudes, animated by tAnim for slow drift.
+            if (rad > 30 && obj.kind === 'gas_giant') {
+              const stormR = mulberry32(objHash(obj) + 0xcd);
+              const stormCount = 2 + Math.floor(stormR() * 3);
+              for (let s = 0; s < stormCount; s++) {
+                const lat = (stormR() - 0.5) * 1.4;
+                const lon = stormR() * Math.PI * 2 + tAnim * 0.02 * (s + 1);
+                const sx = Math.sin(lon) * Math.cos(lat) * rad * 0.85;
+                const sy = Math.sin(lat) * rad * 0.85;
+                if (sx * sx + sy * sy > rad * rad * 0.72) continue;
+                const sRad = rad * (0.08 + stormR() * 0.10);
+                const tintR = Math.min(255, obj.cr + (stormR() < 0.5 ? -50 : 50));
+                const tintG = Math.min(255, obj.cg + (stormR() < 0.5 ? -30 : 20));
+                const tintB = Math.min(255, obj.cb + (stormR() < 0.5 ? -20 : 30));
+                const storm = ctx.createRadialGradient(proj.px + sx, proj.py + sy, 0, proj.px + sx, proj.py + sy, sRad);
+                storm.addColorStop(0, `rgba(${tintR},${tintG},${tintB},0.7)`);
+                storm.addColorStop(0.6, `rgba(${tintR},${tintG},${tintB},0.3)`);
+                storm.addColorStop(1, `rgba(${tintR},${tintG},${tintB},0)`);
+                ctx.fillStyle = storm;
+                ctx.beginPath(); ctx.ellipse(proj.px + sx, proj.py + sy, sRad, sRad * 0.55, lon, 0, Math.PI * 2); ctx.fill();
+              }
+            }
+            // Specular highlight on ocean worlds — a small bright crescent
+            // where a sun would reflect off the water.
+            if (rad > 25 && obj.kind === 'ocean') {
+              const phaseR2 = mulberry32(objHash(obj) + 0x99);
+              const phase = phaseR2() * Math.PI * 2;
+              const hx = Math.cos(phase) * rad * 0.45;
+              const hy = Math.sin(phase) * rad * 0.45;
+              const spec = ctx.createRadialGradient(proj.px + hx, proj.py + hy, 0, proj.px + hx, proj.py + hy, rad * 0.35);
+              spec.addColorStop(0, 'rgba(255,255,255,0.65)');
+              spec.addColorStop(0.4, 'rgba(255,255,255,0.18)');
+              spec.addColorStop(1, 'rgba(255,255,255,0)');
+              ctx.save();
+              ctx.beginPath(); ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2); ctx.clip();
+              ctx.fillStyle = spec;
+              ctx.fillRect(proj.px - rad, proj.py - rad, rad * 2, rad * 2);
+              ctx.restore();
+            }
+            // Polar aurora — green/red bands on terrestrial planets, animated.
+            if (rad > 35 && (obj.kind === 'ocean' || obj.kind === 'iceworld' || obj.kind === 'shrouded')) {
+              const auroraR = mulberry32(objHash(obj) + 0xde);
+              if (auroraR() > 0.35) {
+                const ag = 100 + auroraR() * 155;
+                const ab = 180 + auroraR() * 75;
+                const auroraPhase = tAnim * 0.4 + auroraR() * Math.PI * 2;
+                const flick = 0.4 + 0.3 * Math.sin(auroraPhase);
+                ctx.save();
+                ctx.beginPath(); ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2); ctx.clip();
+                ctx.strokeStyle = `rgba(80,${ag | 0},${ab | 0},${flick.toFixed(2)})`;
+                ctx.lineWidth = Math.max(0.6, rad * 0.04);
+                // North polar ring
+                ctx.beginPath(); ctx.ellipse(proj.px, proj.py - rad * 0.7, rad * 0.55, rad * 0.18, 0, 0, Math.PI * 2); ctx.stroke();
+                // South polar ring
+                ctx.beginPath(); ctx.ellipse(proj.px, proj.py + rad * 0.7, rad * 0.55, rad * 0.18, 0, 0, Math.PI * 2); ctx.stroke();
+                ctx.restore();
+              }
+            }
+            // Ring (existing) — keep below the atmosphere/storm details so it
+            // sits on top of the body but under the very outermost glow.
             if (obj.hasRing && rad > 2) {
               const ringA = Math.min(0.75, 0.4 + depth * 0.5);
               ctx.strokeStyle = `rgba(${obj.cr},${obj.cg},${obj.cb},${ringA.toFixed(2)})`;
@@ -2923,6 +3007,14 @@
               ctx.beginPath();
               ctx.ellipse(proj.px, proj.py, rad * 1.7, rad * 0.45, 0.4, 0, Math.PI * 2);
               ctx.stroke();
+              // Inner ring division for detail
+              if (rad > 30) {
+                ctx.strokeStyle = `rgba(${(obj.cr*0.7)|0},${(obj.cg*0.7)|0},${(obj.cb*0.7)|0},${(ringA * 0.6).toFixed(2)})`;
+                ctx.lineWidth = Math.max(0.4, rad * 0.05);
+                ctx.beginPath();
+                ctx.ellipse(proj.px, proj.py, rad * 1.45, rad * 0.38, 0.4, 0, Math.PI * 2);
+                ctx.stroke();
+              }
             }
           }
 
