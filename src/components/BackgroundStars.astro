@@ -435,7 +435,7 @@
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this — 1e18 = ~3.3B·c (smoothness guaranteed by multiplicative ramp + stableCap)
       maxAngleChange: 0.524,       // 30° — picker's preferred forward cone (widens on fallback)
       accelTimeSec: 1.0,           // seconds to ramp from designSpeed up to baseSpeed at travel start
-      accelPower: 2,               // ramp curve exponent (1=linear, 2=ease-in quad, 3=cubic, 4=quart)
+      accelPower: 2.3,             // ramp curve exponent (1=linear, 2=ease-in quad, 3=cubic, 4=quart)
       flybyOffset: 0,              // perpendicular fly-by offset, in multiples of closeThreshold (0 = head-on, 2 = pass at 2× approach radius)
       warpCurveOffset: 1.0,        // cruise plateau as fraction of maxWarpExp ceiling (1 = full warp, 0.5 = half-warp cruise)
       cruiseMinSec: 0,             // extra hold time at peak warp before decel can start (lengthens cruise plateau)
@@ -445,7 +445,7 @@
       arrivalLookAtBody: 0,        // 0..1 — how strongly camera tracks the body during linger (0 = none, 1 = locked)
       arrivalSettleRate: 4,        // exponential rate for lookAtBody yaw/pitch tracking (higher = snappier)
       decelTimeSec: 2.5,           // brake duration in seconds — long by default so arrivals glide rather than slam
-      decelGaussianA: 0,           // when > 0, brake follows e^(-a·x²) on positive x (overrides decelPower)
+      decelGaussianA: 0.1,         // when > 0, brake follows e^(-a·x²) on positive x (overrides decelPower)
       tripTimeMin: 3,              // minimum random travel time per trip (seconds)
       tripTimeMax: 10,             // maximum random travel time per trip (seconds) — picks peakVel to match
       preSearchDelaySec: 1.5,      // seconds of linger to warp before searching for the next POI
