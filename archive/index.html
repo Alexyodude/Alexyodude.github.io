@@ -2039,6 +2039,14 @@
               const brakeStartDist = closeThreshold + brakeWidth;
               let curveVel;
               if (dist > brakeStartDist) {
+                // Re-entering accel/cruise (e.g. fly-by overshoot bounce-back):
+                // clear any latched final-approach state so a stale
+                // autopilotFinalStart from the inbound pass doesn't pin
+                // velocity at designSpeed when we cross back into the brake.
+                if (autopilotFinalStart >= 0) {
+                  autopilotFinalStart = -1;
+                  autopilotFinalEntryVel = 0;
+                }
                 // Accel + cruise — time-based. Floor the ramp at designSpeed
                 // so trips that begin after an arrivalHoldSec=0-velocity linger
                 // still kick off the warp on the first frame.
