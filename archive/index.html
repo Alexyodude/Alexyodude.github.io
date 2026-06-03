@@ -407,11 +407,11 @@
       // physical. When v exceeds c (super-luminal cruise) the value pins and
       // we append γ so the relativistic regime is still informative.
       const vc = lastCamV / C;
-      const betaPhys = Math.min(0.999, Math.max(0, vc));
-      const gammaPhys = 1 / Math.sqrt(Math.max(1e-6, 1 - betaPhys * betaPhys));
+      const betaPhys = Math.min(0.999999, Math.max(0, vc));
+      const gammaPhys = 1 / Math.sqrt(Math.max(1e-9, 1 - betaPhys * betaPhys));
       if (!isFinite(vc)) elB.textContent = '—';
-      else if (vc >= 1) elB.textContent = '0.999 γ=' + gammaPhys.toFixed(1);
-      else elB.textContent = betaPhys.toFixed(4) + ' γ=' + gammaPhys.toFixed(2);
+      else if (vc >= 1) elB.textContent = '0.999999 γ=' + gammaPhys.toFixed(4);
+      else elB.textContent = betaPhys.toFixed(8) + ' γ=' + gammaPhys.toFixed(6);
     }
     refreshUI();
 
