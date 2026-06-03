@@ -465,7 +465,8 @@
       warpCurveOffset: 1.0,        // cruise plateau as fraction of maxWarpExp ceiling (1 = full warp, 0.5 = half-warp cruise)
       cruiseMinSec: 0,             // extra hold time at peak warp before decel can start (lengthens cruise plateau)
       decelOffsetSec: 0,           // delay before decel begins (shifts the brake later in the timeline)
-      arrivalDriftFrac: 1.0,       // linger drift speed as fraction of designSpeed (0 = parked, 1 = full drift past)
+      arrivalDriftFrac: 1.0,       // linger drift speed as fraction of designSpeed (used only when passByVelC = 0)
+      passByVelC: 3,               // linger drift speed in units of c — set the absolute pass-by velocity directly. 0 = use arrivalDriftFrac legacy formula
       arrivalHoldSec: 0,           // hold motionless at arrival for N sec before drifting (a dramatic "we're here" pause)
       arrivalLookAtBody: 0,        // 0..1 — how strongly camera tracks the body during linger (0 = none, 1 = locked)
       arrivalSettleRate: 4,        // exponential rate for lookAtBody yaw/pitch tracking (higher = snappier)
@@ -1122,6 +1123,7 @@
       { title: 'ARRIVAL', specs: [
         { key: 'arrivalHoldSec',      label: 'hold pause (s)',min: 0,    max: 5,   step: 0.1 },
         { key: 'arrivalDriftFrac',    label: 'drift fraction',min: 0,    max: 2,   step: 0.05 },
+        { key: 'passByVelC',          label: 'pass-by v (c)', min: 0,    max: 20,  step: 0.1 },
         { key: 'arrivalLookAtBody',   label: 'look at body',  min: 0,    max: 1,   step: 0.05 },
         { key: 'arrivalSettleRate',   label: 'look settle',   min: 0.5,  max: 12,  step: 0.1 },
         { key: 'linger',              label: 'linger (s)',    min: 1,    max: 20,  step: 0.5 },
@@ -2464,7 +2466,11 @@
               const lookFrac = Math.max(0, Math.min(1, autoCfg.arrivalLookAtBody || 0));
               const settleRate = Math.max(0.1, autoCfg.arrivalSettleRate || 4);
               const curMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
-              const targetMag = sinceArrival < holdSec ? 0 : designSpeed * driftFrac;
+              // passByVelC overrides the legacy designSpeed×driftFrac formula:
+              // 0 = legacy, > 0 = absolute drift velocity in units of c.
+              const passByVc = autoCfg.passByVelC || 0;
+              const driftTarget = passByVc > 0 ? passByVc * C : designSpeed * driftFrac;
+              const targetMag = sinceArrival < holdSec ? 0 : driftTarget;
               const lerp = Math.min(1, dt * 3.5);
               const newMag = curMag + (targetMag - curMag) * lerp;
               if (curMag > 1) {
