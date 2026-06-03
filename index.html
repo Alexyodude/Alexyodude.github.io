@@ -862,13 +862,12 @@
           const aA = autoCfg.decelAtanA || 0;
           let ease;
           if (aA > 0) {
-            // Preview curve sample: u in [B, 1] means t in [1, 0]. We want
-            // ease=1 at t=1 (curveVel = plateau) and ease=0 at t=0 (drift).
-            // x in [0, 1] mirrors physics where x = 1 - distU.
+            // Preview curve sample using the same 6-digit π as the physics.
+            const PI6 = 3.141593;
             const x = 1 - t;
-            const r1 = Math.PI / 2 - Math.atan(-Math.PI / 2);
-            const r0 = Math.PI / 2 - Math.atan(aA - Math.PI / 2);
-            const rv = Math.PI / 2 - Math.atan(aA * x - Math.PI / 2);
+            const r1 = PI6 / 2 - Math.atan(-PI6 / 2);
+            const r0 = PI6 / 2 - Math.atan(aA - PI6 / 2);
+            const rv = PI6 / 2 - Math.atan(aA * x - PI6 / 2);
             ease = (rv - r0) / Math.max(1e-9, r1 - r0);
             ease = Math.max(0, Math.min(1, ease));
           } else if (aG > 0) {
@@ -2033,11 +2032,13 @@
                 let ease;
                 if (aA > 0) {
                   // ease = (π/2 − atan(a·x − π/2)) normalized to [0, 1] over x ∈ [1, 0]
-                  // (x = 1 - distU; ease=1 at distU=1, ease=0 at distU=0).
+                  // π is the 6-digit literal 3.141593 so the curve matches the
+                  // graph plotted in Desmos / on paper at that precision.
+                  const PI6 = 3.141593;
                   const x = 1 - distU;
-                  const r1 = Math.PI / 2 - Math.atan(-Math.PI / 2);         // raw at distU=1 (x=0)
-                  const r0 = Math.PI / 2 - Math.atan(aA - Math.PI / 2);     // raw at distU=0 (x=1)
-                  const rv = Math.PI / 2 - Math.atan(aA * x - Math.PI / 2);
+                  const r1 = PI6 / 2 - Math.atan(-PI6 / 2);
+                  const r0 = PI6 / 2 - Math.atan(aA - PI6 / 2);
+                  const rv = PI6 / 2 - Math.atan(aA * x - PI6 / 2);
                   ease = (rv - r0) / Math.max(1e-9, r1 - r0);
                 } else if (aG > 0) {
                   const x = 1 - distU;
