@@ -2190,12 +2190,12 @@
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
       const ccz = Math.floor(cam[2] / CHUNK_SIZE);
       // Relativistic β smoothed across frames so it ramps gradually instead of
-      // snapping when Shift+W is tapped. Saturates at 0.999 (Shift warp ceiling).
-      // Use a faster lerp when β is FALLING (decel passing back through c) so the
-      // β readout actually changes during the brake's final pass through c.
+      // Relativistic β smoothed across frames so aberration / Doppler don't
+      // snap when v crosses through c. Slow lerp (rate ≈ 2) means the visual
+      // transition takes ~1.5s instead of ~80ms — the background relaxes
+      // continuously instead of jumping.
       const targetBeta = Math.min(0.999, camV / C);
-      const betaRate = targetBeta < smoothBeta ? 12 : 4;
-      smoothBeta += (targetBeta - smoothBeta) * Math.min(1, dt * betaRate);
+      smoothBeta += (targetBeta - smoothBeta) * Math.min(1, dt * 2);
       const beta = smoothBeta;
 
       // Iterate the full cube around the camera (we can now look in any direction)
