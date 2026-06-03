@@ -410,7 +410,19 @@
         peak = maxW;
         const accelAtMax = aT * (startV + (maxW - startV) / (aPow + 1));
         const decelAtMax = dT * (designSp + (maxW - designSp) / (dPow + 1));
-        cruiseTime = Math.max(0, (D - accelAtMax - decelAtMax) / Math.max(maxW, 1));
+        const surplus = D - accelAtMax - decelAtMax;
+        if (surplus >= 0) {
+          cruiseTime = surplus / Math.max(maxW, 1);
+        } else {
+          // Even with cruise=0, accel + decel at maxW overshoots the trip
+          // distance budget. Solve for the lower peak that exactly fits:
+          //   aT·(startV + (p − startV)/(aPow+1))
+          // + dT·(designSp + (p − designSp)/(dPow+1)) = D
+          //   ⇒ p · [aT/(aPow+1) + dT/(dPow+1)] = D − aT·startV·aPow/(aPow+1) − dT·designSp·dPow/(dPow+1)
+          const k2 = aT / (aPow + 1) + dT / (dPow + 1);
+          peak = Math.max(designSp, (D - ca - cd) / Math.max(k2, 1e-9));
+          cruiseTime = 0;
+        }
       } else if (peak < designSp) {
         // Asked-for time is too long for this distance — short trip, no cruise.
         peak = Math.max(designSp, peak);
