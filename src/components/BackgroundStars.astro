@@ -382,7 +382,14 @@
       const cruiseHold = Math.max(0, autoCfg.cruiseMinSec || 0);
       const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
       const startV = autopilotStartVel || 0;
-      const D = Math.max(0, autopilotOrigDist - cThr);
+      // Final-approach reserves a fixed distance budget so the closed-form
+      // brake stops at finalApproachVelC·c, then the linear ramp covers the
+      // rest. Without subtracting it from D, peak is too high and the camera
+      // crawls at designSp for many seconds after the ramp completes.
+      const finalSec = Math.max(0, autoCfg.finalApproachSec || 0);
+      const finalVc = Math.max(0.5, autoCfg.finalApproachVelC || 8) * C;
+      const finalDist = (finalVc + designSp) * 0.5 * finalSec;
+      const D = Math.max(0, autopilotOrigDist - cThr - finalDist);
       // Closed-form solve.
       //   accelDist  = aT · (startV + (peak − startV) / (aPow + 1))
       //   cruiseDist = peak · cruiseTime
@@ -414,7 +421,6 @@
       }
       autopilotPeakVel = peak;
       autopilotCruiseTime = cruiseTime + cruiseHold;
-      const finalSec = Math.max(0, autoCfg.finalApproachSec || 0);
       autopilotExpectedAccel = aT;
       autopilotExpectedCruise = autopilotCruiseTime;
       autopilotExpectedDecel = dT + decelDelay + finalSec;
@@ -1220,13 +1226,25 @@
         }
         ctx2.stroke();
         // |dv/dt| overlay (magenta dashed) — normalized to peak |accel|.
+        // Box-filter smoothed (±5 samples) so floating-point noise at super-
+        // luminal velocities doesn't shred the trace into jitter.
         let peakAccel = 0;
-        const accels = [];
+        const rawAccels = [];
         for (let i = 1; i < autopilotVelHistory.length; i++) {
           const dv = autopilotVelHistory[i].v - autopilotVelHistory[i - 1].v;
           const dtS = Math.max(1e-6, autopilotVelHistory[i].t - autopilotVelHistory[i - 1].t);
-          const a = Math.abs(dv / dtS);
-          accels.push({ t: autopilotVelHistory[i].t, a });
+          rawAccels.push({ t: autopilotVelHistory[i].t, a: Math.abs(dv / dtS) });
+        }
+        const W = 5;
+        const accels = [];
+        for (let i = 0; i < rawAccels.length; i++) {
+          let sum = 0, count = 0;
+          for (let j = Math.max(0, i - W); j <= Math.min(rawAccels.length - 1, i + W); j++) {
+            sum += rawAccels[j].a;
+            count++;
+          }
+          const a = sum / count;
+          accels.push({ t: rawAccels[i].t, a });
           if (a > peakAccel) peakAccel = a;
         }
         if (peakAccel > 0) {
