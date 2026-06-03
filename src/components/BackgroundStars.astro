@@ -2414,7 +2414,16 @@
                 // still kick off the warp on the first frame.
                 if (elapsedT < aT) {
                   const u = elapsedT / aT;
-                  const ease = Math.pow(u, autoCfg.accelPower);
+                  // Quintic smootherstep: 6u^5 − 15u^4 + 10u^3.
+                  // Zero first AND second derivatives at u=0 and u=1, so the
+                  // handoff from rest → accel → cruise is C² continuous —
+                  // bodies in the background never "snap" speed.
+                  const smooth = u * u * u * (u * (u * 6 - 15) + 10);
+                  // accelPower biases front- vs back-load WITHIN the smooth
+                  // envelope by remapping the smoothstep output, so the knob
+                  // still does something without re-introducing endpoint kinks.
+                  const p = Math.max(0.2, autoCfg.accelPower);
+                  const ease = p === 1 ? smooth : Math.pow(smooth, p);
                   const rampFloor = Math.max(autopilotStartVel, designSpeed);
                   curveVel = rampFloor + (peakVel - rampFloor) * ease;
                 } else {
@@ -2449,7 +2458,18 @@
                   const tail = Math.exp(-aG);
                   ease = (Math.exp(-aG * x * x) - tail) / Math.max(1e-9, 1 - tail);
                 } else {
-                  ease = Math.pow(1 - brakeU, dPow);
+                  // Smootherstep brake (mirror of accel ramp): the previous
+                  // `(1−u)^dPow` curve had a nonzero derivative at u=0, so the
+                  // transition from constant cruise into brake produced a
+                  // dv/dt cliff — bodies in view appeared to snap-decelerate.
+                  // 6u^5 − 15u^4 + 10u^3 has zero first AND second derivatives
+                  // at u=0 and u=1, so cruise→brake→designSpeed is C² smooth
+                  // and the background continues moving smoothly throughout.
+                  const u = brakeU;
+                  const smooth = u * u * u * (u * (u * 6 - 15) + 10);
+                  const p = Math.max(0.2, dPow);
+                  const sk = p === 1 ? smooth : Math.pow(smooth, p);
+                  ease = 1 - sk;
                 }
                 curveVel = designSpeed + (peakVel - designSpeed) * Math.max(0, Math.min(1, ease));
               }
