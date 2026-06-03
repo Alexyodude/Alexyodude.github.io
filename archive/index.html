@@ -68,7 +68,7 @@
       const aT = Math.max(0.05, autoCfg.accelTimeSec);
       const dT = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
       const aPow = Math.max(1, autoCfg.accelPower);
-      const dPow = Math.max(1, autoCfg.decelPower);
+      const dPow = Math.max(0.2, autoCfg.decelPower);
       const cruiseHold = Math.max(0, autoCfg.cruiseMinSec || 0);
       const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
       const startV = autopilotStartVel || 0;
@@ -121,7 +121,7 @@
       approachStar: 18,
       approachBlackhole: 50,
       decelCorridorMul: 4,         // brake corridor — slowdown only kicks in inside threshold × this
-      decelPower: 4,               // ease exponent — high values give a sharp initial decel that ramps down toward proximity
+      decelPower: 1,               // ease exponent — < 1 (e.g. 0.5) gives constant-deceleration feel; 1 is linear in distance; > 1 cruises then dumps
       designSpeedDivisor: 15,      // designSpeed = closeThreshold / (linger × this)
       velocityLerp: 1,             // velocity smoothing rate during autopilot (post-block low-pass)
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this — 1e18 = ~3.3B·c (smoothness guaranteed by multiplicative ramp + stableCap)
@@ -763,7 +763,7 @@
       ]},
       { title: 'DECEL', specs: [
         { key: 'decelTimeSec',        label: 'brake time (s)',min: 0.2,  max: 15,  step: 0.1 },
-        { key: 'decelPower',          label: 'decel curve',   min: 1,    max: 6,   step: 0.1 },
+        { key: 'decelPower',          label: 'decel curve',   min: 0.2,  max: 6,   step: 0.05 },
         { key: 'decelGaussianA',      label: 'gauss a (0=off)',min: 0,   max: 10,  step: 0.1 },
         { key: 'decelCorridorMul',    label: 'decel corridor',min: 1.2,  max: 10,  step: 0.1 },
         { key: 'decelOffsetSec',      label: 'decel delay (s)',min: 0,   max: 5,   step: 0.1 },
@@ -1973,7 +1973,7 @@
               const aT = Math.max(0.05, autoCfg.accelTimeSec);
               const dT = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
               const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
-              const dPow = Math.max(1, autoCfg.decelPower);
+              const dPow = Math.max(0.2, autoCfg.decelPower);
               const cruiseT = autopilotCruiseTime;
               const peakVel = Math.max(autopilotStartVel, autopilotPeakVel);
               const elapsedT = tAnimSec - autopilotTravelStart;
