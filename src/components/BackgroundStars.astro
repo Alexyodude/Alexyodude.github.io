@@ -445,7 +445,7 @@
       arrivalLookAtBody: 0,        // 0..1 — how strongly camera tracks the body during linger (0 = none, 1 = locked)
       arrivalSettleRate: 4,        // exponential rate for lookAtBody yaw/pitch tracking (higher = snappier)
       decelTimeSec: 2.5,           // brake duration in seconds — long by default so arrivals glide rather than slam
-      decelGaussianA: 0.1,         // when > 0, brake follows e^(-a·x²) on positive x (overrides decelPower)
+      decelGaussianA: 0,           // when > 0, brake follows e^(-a·x²) — low values (0.1) feel like a cliff; try ≥ 2 for a soft Gaussian shape
       tripTimeMin: 3,              // minimum random travel time per trip (seconds)
       tripTimeMax: 10,             // maximum random travel time per trip (seconds) — picks peakVel to match
       preSearchDelaySec: 1.5,      // seconds of linger to warp before searching for the next POI
