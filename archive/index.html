@@ -1261,10 +1261,11 @@
       // distance secondary. Hard reject if angle > autoCfg.maxAngleChange.
       // First pass enforces the angle cap; only if nothing qualifies do we
       // fall back to accepting any forward candidate.
-      // Skip targets too close for a meaningful warp leg — origDist must be
-      // large enough that the closed-form peakVel exceeds designSpeed, else
-      // the whole trip runs at designSp and the user sees stuck velocity.
-      const MIN_TRIP_DIST_SQ = 1e24; // (1e12 m)² — ≈ 6.7 AU minimum
+      // Skip targets too close for a meaningful warp leg — but keep the floor
+      // small so sparse regions still resolve a target instead of falling back
+      // to plain drift. 1e10 m (≈ 100,000 km) is well above any body radius
+      // but tiny compared to typical inter-chunk spacing.
+      const MIN_TRIP_DIST_SQ = 1e20; // (1e10 m)²
       function searchPass(angleCapRad) {
         for (const radius of [4, 8, 16, 32, 60]) {
           let best = null, bestScore = Infinity;
