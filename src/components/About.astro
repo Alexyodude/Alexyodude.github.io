@@ -64,7 +64,7 @@ const entries = (timeline as Entry[]).slice().reverse();
     flex-shrink: 0;
     width: 144px;
     padding-top: 1.25rem;
-    z-index: 2;
+    z-index: 3;
   }
   .timeline-dot {
     position: absolute;
@@ -137,7 +137,7 @@ const entries = (timeline as Entry[]).slice().reverse();
       0 0 6px rgba(99,102,241,0.55),
       0 0 14px rgba(236,72,153,0.30);
     pointer-events: none;
-    z-index: 3;
+    z-index: 2;
     animation:
       timelineProgress 8s ease-out 1 forwards,
       timelineShimmer 2.2s linear infinite,

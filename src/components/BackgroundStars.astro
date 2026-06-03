@@ -831,16 +831,27 @@
     refreshAutopilotButton();
 
     // ===== Debug panel for autopilot tuning =====
-    // Debug panel is on by default. The buttons appear in the coord overlay
-    // so anyone can open the autopilot tuner / live telemetry stream.
+    // Debug panel is hidden in production (deployed builds). It auto-enables
+    // on localhost dev, or anywhere with ?debug in the URL for ad-hoc tuning.
     const debugEnabled = (() => {
-      try { return !new URLSearchParams(location.search).has('nodebug'); }
-      catch (e) { return true; }
+      try {
+        const p = new URLSearchParams(location.search);
+        if (p.has('nodebug')) return false;
+        if (p.has('debug')) return true;
+        const h = location.hostname;
+        return h === 'localhost' || h === '127.0.0.1' || h === '';
+      } catch (e) { return false; }
     })();
     const debugPanel = document.getElementById('debug-panel');
     const debugRowsEl = document.getElementById('debug-rows');
     const btnDebug = document.getElementById('coord-debug');
     if (debugEnabled && btnDebug) btnDebug.hidden = false;
+
+    // Hide the entire coord-panel on deployed builds — it's a dev/debug surface.
+    if (!debugEnabled) {
+      const coordPanelEl = document.getElementById('coord-panel');
+      if (coordPanelEl) coordPanelEl.style.display = 'none';
+    }
 
     // ===== Deep debug panel (?debug) — live per-frame state stream =====
     const deepPanel = document.getElementById('deep-debug-panel');
