@@ -112,10 +112,15 @@
       }
       autopilotPeakVel = peak;
       autopilotCruiseTime = cruiseTime + cruiseHold;
+      // Time-based brake completes at t=aT+cruiseTime+dT (closed-form sizes
+      // peak so brakeWidth fits the remaining distance budget). Don't add
+      // finalSec — final approach piggybacks on the same window when peak
+      // is super-luminal; adding it stretches the marker past actual arrival
+      // and the marker snaps to 1 at lingering trigger.
       autopilotExpectedAccel = aT;
       autopilotExpectedCruise = autopilotCruiseTime;
-      autopilotExpectedDecel = dT + decelDelay + finalSec;
-      autopilotExpectedDuration = Math.max(0.1, aT + autopilotCruiseTime + dT + decelDelay + finalSec);
+      autopilotExpectedDecel = dT + decelDelay;
+      autopilotExpectedDuration = Math.max(0.1, aT + autopilotCruiseTime + dT + decelDelay);
     }
     const autopilotOffset = [0, 0, 0]; // perpendicular fly-by offset (so we pass on the side)
     const nextAutopilotOffset = [0, 0, 0]; // fly-by offset for the queued next target
