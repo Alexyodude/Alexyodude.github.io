@@ -1261,6 +1261,10 @@
       // distance secondary. Hard reject if angle > autoCfg.maxAngleChange.
       // First pass enforces the angle cap; only if nothing qualifies do we
       // fall back to accepting any forward candidate.
+      // Skip targets too close for a meaningful warp leg — origDist must be
+      // large enough that the closed-form peakVel exceeds designSpeed, else
+      // the whole trip runs at designSp and the user sees stuck velocity.
+      const MIN_TRIP_DIST_SQ = 1e24; // (1e12 m)² — ≈ 6.7 AU minimum
       function searchPass(angleCapRad) {
         for (const radius of [4, 8, 16, 32, 60]) {
           let best = null, bestScore = Infinity;
@@ -1276,6 +1280,7 @@
                   const ddy = obj.wy - cam[1];
                   const ddz = obj.wz - cam[2];
                   const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+                  if (d2 < MIN_TRIP_DIST_SQ) continue;
                   let score;
                   if (haveDir) {
                     const dn = Math.sqrt(d2) || 1;
