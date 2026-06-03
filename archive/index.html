@@ -2083,9 +2083,16 @@
               // that entry velocity down to designSpeed over finalApproachSec.
               // Without this, the sub-c portion of the brake is covered in
               // one frame at super-luminal peak velocities — the "cliff".
+              // Final approach only activates IN THE BRAKE PHASE. The previous
+              // condition `curveVel < finalThresh` fired during the accel ramp
+              // at u=0 (where curveVel = rampFloor = designSpeed << finalThresh)
+              // and locked velocity at designSpeed for the entire trip. Gating
+              // on `dist < brakeStartDist` ensures we're actually braking
+              // toward the body before the final-approach takeover kicks in.
               const finalThresh = Math.max(0.5, autoCfg.finalApproachVelC || 8) * C;
               const finalT = Math.max(0.1, autoCfg.finalApproachSec || 3);
-              if (curveVel < finalThresh || autopilotFinalStart >= 0) {
+              const inBrakeZone = dist < brakeStartDist;
+              if (inBrakeZone && (curveVel < finalThresh || autopilotFinalStart >= 0)) {
                 if (autopilotFinalStart < 0) {
                   autopilotFinalStart = tAnimSec;
                   autopilotFinalEntryVel = Math.max(curveVel, designSpeed);
