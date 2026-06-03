@@ -882,6 +882,36 @@
           else ctx2.lineTo(x, y);
         }
         ctx2.stroke();
+        // |dv/dt| overlay (magenta dashed) — normalized to peak |accel|.
+        let peakAccel = 0;
+        const accels = [];
+        for (let i = 1; i < autopilotVelHistory.length; i++) {
+          const dv = autopilotVelHistory[i].v - autopilotVelHistory[i - 1].v;
+          const dtS = Math.max(1e-6, autopilotVelHistory[i].t - autopilotVelHistory[i - 1].t);
+          const a = Math.abs(dv / dtS);
+          accels.push({ t: autopilotVelHistory[i].t, a });
+          if (a > peakAccel) peakAccel = a;
+        }
+        if (peakAccel > 0) {
+          ctx2.strokeStyle = '#f472b6';
+          ctx2.lineWidth = 1.2;
+          ctx2.setLineDash([3, 2]);
+          ctx2.beginPath();
+          for (let i = 0; i < accels.length; i++) {
+            const s = accels[i];
+            const u = Math.max(0, Math.min(1, s.t / total));
+            const aN = s.a / peakAccel;
+            const x = padL + u * plotW;
+            const y = padT + plotH * (1 - aN);
+            if (i === 0) ctx2.moveTo(x, y);
+            else ctx2.lineTo(x, y);
+          }
+          ctx2.stroke();
+          ctx2.setLineDash([]);
+          ctx2.fillStyle = '#f472b6';
+          ctx2.fillText('|accel|', padL + 70, padT + 9);
+          ctx2.fillStyle = muted;
+        }
       }
       // Phase tick marks at A (accel→cruise) and B (cruise→decel).
       ctx2.strokeStyle = muted;
