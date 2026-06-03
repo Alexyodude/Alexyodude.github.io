@@ -918,18 +918,19 @@
         }
         ctx2.stroke();
         // |dv/dt| overlay (magenta dashed) — normalized to peak |accel|.
-        // Box-filter smoothed (±5 samples) so floating-point noise at super-
-        // luminal velocities doesn't shred the trace into jitter.
+        // Use a wide-span finite difference (samples ±SPAN apart) so fp noise
+        // averages out instead of dominating; then Gaussian-smooth the result
+        // for visual continuity. At 60fps SPAN=30 is half a second of velocity
+        // change, which is the right ballpark for the bell-curve regime.
         let peakAccel = 0;
+        const SPAN = 30;
         const rawAccels = [];
-        for (let i = 1; i < autopilotVelHistory.length; i++) {
-          const dv = autopilotVelHistory[i].v - autopilotVelHistory[i - 1].v;
-          const dtS = Math.max(1e-6, autopilotVelHistory[i].t - autopilotVelHistory[i - 1].t);
+        for (let i = SPAN; i < autopilotVelHistory.length - SPAN; i++) {
+          const dv = autopilotVelHistory[i + SPAN].v - autopilotVelHistory[i - SPAN].v;
+          const dtS = Math.max(1e-6, autopilotVelHistory[i + SPAN].t - autopilotVelHistory[i - SPAN].t);
           rawAccels.push({ t: autopilotVelHistory[i].t, a: Math.abs(dv / dtS) });
         }
-        // Heavy Gaussian smoothing — fp noise at super-luminal velocities
-        // dominates raw |dv/dt|, so we use a wide σ kernel (≈20 samples).
-        const SIGMA = 20;
+        const SIGMA = 15;
         const KERNEL_HALF = 3 * SIGMA;
         const accels = [];
         for (let i = 0; i < rawAccels.length; i++) {
