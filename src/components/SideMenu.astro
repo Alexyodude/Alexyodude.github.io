@@ -58,16 +58,33 @@ const items: Item[] = [
 </aside>
 
 <style>
-  .side-menu-link.active .side-menu-dot {
-    background-color: var(--color-accent) !important;
-    transform: scale(2);
-    box-shadow: 0 0 8px var(--color-accent);
+  /* Verde palette for the side menu only — overrides accent/muted locally. */
+  #side-menu {
+    --verde:       #10b981; /* emerald 500 — active */
+    --verde-soft:  #34d399; /* emerald 400 — hover */
+    --verde-dim:   #6ee7b7; /* emerald 300 — idle text */
   }
-  .side-menu-link.active .side-menu-label {
-    color: var(--color-accent) !important;
+  [data-theme="dark"] #side-menu {
+    --verde:       #34d399;
+    --verde-soft:  #6ee7b7;
+    --verde-dim:   #a7f3d0;
+  }
+  #side-menu .side-menu-link { color: var(--verde-dim); }
+  #side-menu .side-menu-link .side-menu-dot { background-color: var(--verde-dim); }
+  #side-menu .side-menu-link:hover { color: var(--verde-soft); }
+  #side-menu .side-menu-link:hover .side-menu-dot { background-color: var(--verde-soft); }
+
+  #side-menu .side-menu-link.active .side-menu-dot {
+    background-color: var(--verde) !important;
+    transform: scale(2);
+    box-shadow: 0 0 8px var(--verde);
+  }
+  #side-menu .side-menu-link.active,
+  #side-menu .side-menu-link.active .side-menu-label {
+    color: var(--verde) !important;
     font-weight: 600;
   }
-  .side-menu-link.expanded .side-menu-caret {
+  #side-menu .side-menu-link.expanded .side-menu-caret {
     transform: rotate(90deg);
   }
 </style>

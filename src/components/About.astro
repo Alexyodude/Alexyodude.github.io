@@ -11,7 +11,7 @@ type Entry = {
 const entries = (timeline as Entry[]).slice().reverse();
 ---
 
-<section class="px-6 py-16 max-w-3xl mx-auto">
+<section class="glass px-6 py-16 max-w-3xl mx-auto md:my-8">
   <div id="timeline-row" class="timeline-row" role="region" aria-label="Life timeline">
     <div class="timeline-content" role="list">
       <span class="timeline-track" aria-hidden="true"></span>
@@ -103,7 +103,8 @@ const entries = (timeline as Entry[]).slice().reverse();
     pointer-events: none;
     z-index: 1;
   }
-  /* Glowing gradient progress overlay — grows from past toward the present. */
+  /* Multi-stop gradient progress — grows once to fill, then a moving shimmer
+     band continuously scrolls across it so the bar reads as a live loader. */
   .timeline-progress {
     position: absolute;
     left: 72px;
@@ -111,16 +112,36 @@ const entries = (timeline as Entry[]).slice().reverse();
     height: 2px;
     margin-top: -1px;
     width: 0;
-    background: linear-gradient(
-      to right,
-      color-mix(in srgb, var(--color-accent) 10%, transparent),
-      color-mix(in srgb, var(--color-accent) 50%, transparent) 40%,
-      var(--color-accent) 95%
-    );
-    box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 70%, transparent);
+    background:
+      /* moving shimmer band (white highlight) on top */
+      linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255,255,255,0.0) 35%,
+        rgba(255,255,255,0.85) 50%,
+        rgba(255,255,255,0.0) 65%,
+        transparent 100%
+      ) 0 0 / 200% 100% repeat-x,
+      /* base rainbow gradient that itself slides for a flowing hue */
+      linear-gradient(
+        90deg,
+        #7c3aed 0%,
+        #2563eb 22%,
+        #06b6d4 44%,
+        #10b981 62%,
+        #f59e0b 80%,
+        #ef4444 100%
+      ) 0 0 / 200% 100% repeat-x;
+    background-blend-mode: screen, normal;
+    box-shadow:
+      0 0 6px rgba(99,102,241,0.55),
+      0 0 14px rgba(236,72,153,0.30);
     pointer-events: none;
     z-index: 3;
-    animation: timelineProgress 8s ease-out 1 forwards;
+    animation:
+      timelineProgress 8s ease-out 1 forwards,
+      timelineShimmer 2.2s linear infinite,
+      timelineHueShift 6s linear infinite;
   }
   .timeline-pulse {
     position: absolute;
@@ -131,14 +152,17 @@ const entries = (timeline as Entry[]).slice().reverse();
     margin-top: -5px;
     margin-left: -5px;
     border-radius: 9999px;
-    background: var(--color-accent);
+    background: conic-gradient(from 0deg, #7c3aed, #2563eb, #06b6d4, #10b981, #f59e0b, #ef4444, #7c3aed);
     box-shadow:
-      0 0 8px var(--color-accent),
-      0 0 18px color-mix(in srgb, var(--color-accent) 70%, transparent),
-      0 0 30px color-mix(in srgb, var(--color-accent) 40%, transparent);
+      0 0 8px rgba(99,102,241,0.95),
+      0 0 18px rgba(236,72,153,0.65),
+      0 0 30px rgba(6,182,212,0.40);
     pointer-events: none;
     z-index: 4;
-    animation: timelineMove 8s ease-out 1 forwards, timelinePulse 1.4s ease-in-out infinite;
+    animation:
+      timelineMove 8s ease-out 1 forwards,
+      timelinePulse 1.4s ease-in-out infinite,
+      timelineSpin 3s linear infinite;
   }
   @keyframes timelineMove {
     0%   { left: 72px; }
@@ -149,8 +173,24 @@ const entries = (timeline as Entry[]).slice().reverse();
     100% { width: calc(100% - 144px); }
   }
   @keyframes timelinePulse {
-    0%, 100% { opacity: 0.55; transform: scale(1); }
-    50%      { opacity: 1;    transform: scale(1.8); }
+    0%, 100% { opacity: 0.55; transform: scale(1) rotate(0deg); }
+    50%      { opacity: 1;    transform: scale(1.8) rotate(180deg); }
+  }
+  @keyframes timelineShimmer {
+    0%   { background-position: 200% 0, 0% 0; }
+    100% { background-position: 0% 0, -200% 0; }
+  }
+  @keyframes timelineHueShift {
+    0%   { filter: hue-rotate(0deg); }
+    100% { filter: hue-rotate(360deg); }
+  }
+  @keyframes timelineSpin {
+    from { background-image: conic-gradient(from   0deg, #7c3aed, #2563eb, #06b6d4, #10b981, #f59e0b, #ef4444, #7c3aed); }
+    to   { background-image: conic-gradient(from 360deg, #7c3aed, #2563eb, #06b6d4, #10b981, #f59e0b, #ef4444, #7c3aed); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .timeline-progress { animation: timelineProgress 8s ease-out 1 forwards; }
+    .timeline-pulse    { animation: timelineMove 8s ease-out 1 forwards, timelinePulse 1.4s ease-in-out infinite; }
   }
 </style>
 

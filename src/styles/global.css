@@ -69,17 +69,26 @@ nav a,
 footer p,
 footer a,
 footer span {
+  /* Subtle halo: glass panels now carry most of the contrast, so the per-glyph
+     outline is just a soft blur — no hard cardinal offsets. */
   text-shadow:
-    /* tight per-character outline (4 cardinal + 4 diagonal offsets) */
-    -1px -1px 0 var(--color-bg),
-     1px -1px 0 var(--color-bg),
-    -1px  1px 0 var(--color-bg),
-     1px  1px 0 var(--color-bg),
-     0   -1px 0 var(--color-bg),
-     0    1px 0 var(--color-bg),
-    -1px  0   0 var(--color-bg),
-     1px  0   0 var(--color-bg),
-    /* soft surrounding glow */
-    0 0 6px var(--color-bg),
-    0 0 14px var(--color-bg);
+    0 0 3px color-mix(in srgb, var(--color-bg) 80%, transparent),
+    0 0 8px color-mix(in srgb, var(--color-bg) 55%, transparent);
+}
+
+/* Frosted-glass panel behind exposed text so the starfield doesn't blend
+   through. Tinted toward the page bg, blurred backdrop, hairline border. */
+.glass {
+  position: relative;
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--color-bg) 62%, transparent);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--color-fg) 4%, transparent) inset,
+    0 10px 30px -20px color-mix(in srgb, var(--color-fg) 50%, transparent);
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .glass { background: color-mix(in srgb, var(--color-bg) 88%, transparent); }
 }
