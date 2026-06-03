@@ -711,8 +711,16 @@
       elY.textContent = fmt(cam[1]);
       elZ.textContent = fmt(cam[2]);
       elV.textContent = fmtVelocity(lastCamV);
-      const betaInstant = Math.min(0.999, lastCamV / C);
-      elB.textContent = betaInstant.toFixed(4) + (betaInstant >= 0.998 ? ' (max)' : '');
+      // Show raw v/c so the readout tracks velocity throughout the brake. β
+      // would saturate at 0.999 the whole cruise and only drop in the final
+      // frames — making it look like the value "jumps" at the end. v/c above
+      // 1 is super-luminal (only physical inside our simulator); below 1 it's
+      // a real Lorentz β.
+      const vc = lastCamV / C;
+      if (!isFinite(vc)) elB.textContent = '—';
+      else if (vc >= 100) elB.textContent = vc.toExponential(2) + 'c';
+      else if (vc >= 1) elB.textContent = vc.toFixed(2) + 'c';
+      else elB.textContent = vc.toFixed(4) + ' (β)';
     }
     refreshUI();
 
@@ -2705,7 +2713,9 @@
             ctx.fillStyle = halo;
             ctx.beginPath(); ctx.arc(proj.px, proj.py, angRad * 3, 0, Math.PI * 2); ctx.fill();
           } else {
-            const size = Math.max(0.6, depth * 3.4 * obj.sizeMul);
+            // Dot size scales with angRad up to the gradient threshold so the
+            // transition isn't a visible jump from "small dot" to "blob".
+            const size = Math.max(0.6, Math.max(depth * 3.4 * obj.sizeMul, angRad * 2));
             let a = obj.bri * (0.25 + depth * 0.75);
             let cr = obj.cr, cg = obj.cg, cb = obj.cb;
             if (beta > 0.01) {
@@ -2736,8 +2746,10 @@
         } else if (_item.type === 'planet') {
           const rad = obj.physRadius / 1e15 * proj.k;
           if (rad < 0.6) {
+            // Dot sized at `rad * 2` matches the gradient-disc diameter at
+            // the next LOD tier (rad=0.6) — no visible jump from dot to blob.
             const dotA = Math.max(0.25, 0.6 * depth);
-            drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, dotA, Math.max(0.7, rad * 4));
+            drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, dotA, Math.max(0.7, rad * 2));
           } else if (rad < 6) {
             const visAlpha = Math.min(1, 0.4 + depth);
             const grad = ctx.createRadialGradient(proj.px - rad * 0.35, proj.py - rad * 0.35, 0, proj.px, proj.py, rad);
