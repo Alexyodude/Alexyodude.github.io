@@ -68,9 +68,10 @@
       const maxW = Math.pow(10, autoCfg.maxWarpExp) * offset;
       const designSp = cThr / Math.max(0.1, (autoCfg.linger * autoCfg.designSpeedDivisor));
       const aT = Math.max(0.05, autoCfg.accelTimeSec);
-      const dT = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
       const aPow = Math.max(1, autoCfg.accelPower);
-      const dPow = Math.max(0.2, autoCfg.decelPower);
+      const mirror = (autoCfg.decelMirrorAccel || 0) >= 0.5;
+      const dT = Math.max(0.05, mirror ? aT : (autoCfg.decelTimeSec || 0.6));
+      const dPow = Math.max(0.2, mirror ? aPow : autoCfg.decelPower);
       const cruiseHold = Math.max(0, autoCfg.cruiseMinSec || 0);
       const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
       const startV = autopilotStartVel || 0;
@@ -146,6 +147,7 @@
       decelTimeSec: 2.5,           // brake duration in seconds — long by default so arrivals glide rather than slam
       decelGaussianA: 0,           // when > 0, brake follows e^(-a·x²) — low values (0.1) feel like a cliff; try ≥ 2 for a soft Gaussian shape
       decelAtanA: 0,               // when > 0, brake follows v = b·(π/2 − atan(a·x − π/2)) with x = 1-distU, normalized — sigmoid S-curve
+      decelMirrorAccel: 0,         // 1 = mirror accel: decel uses accelTimeSec/accelPower instead of decelTimeSec/decelPower
       finalApproachVelC: 4,        // when brake curve naturally drops below this many c, switch to a time-based final approach
       finalApproachSec: 7,         // seconds of slow linear ramp from finalApproachVelC down to designSpeed
       tripTimeMin: 3,              // minimum random travel time per trip (seconds)
@@ -416,16 +418,20 @@
       // β is min(1, v/c) by definition; cap at 0.999 so the readout stays
       // physical. When v exceeds c (super-luminal cruise) the value pins and
       // we append γ so the relativistic regime is still informative.
-      // POV β: the same `smoothBeta` value driving aberration / Doppler /
-      // time-dilation / length-contraction. So the readout matches what the
-      // camera actually experiences instead of the raw v/c (which can shoot
-      // past 1 in this super-luminal simulator).
+      // β and γ shown with continuous mappings so the readout actually
+      // tracks velocity throughout the brake (including super-luminal phase):
+      //   β = tanh(v/c)   — matches v/c for small v, asymptotes to 1
+      //   γ = √(1 + (v/c)²) — matches physical γ at low v, grows linearly above c
+      // Physical SR β/γ saturate at v=c which made both readouts pin during
+      // every super-luminal trip. These extensions stay smooth.
       const vc = lastCamV / C;
-      const betaPov = smoothBeta;
-      const gammaPov = 1 / Math.sqrt(Math.max(1e-15, 1 - betaPov * betaPov));
       if (!isFinite(vc)) elB.textContent = '—';
-      else if (vc >= 1) elB.textContent = 'β=' + betaPov.toFixed(12) + ' γ=' + gammaPov.toFixed(4) + ' (v/c=' + vc.toExponential(2) + ')';
-      else elB.textContent = 'β=' + betaPov.toFixed(12) + ' γ=' + gammaPov.toFixed(6);
+      else {
+        const betaDisp = Math.tanh(vc);
+        const gammaDisp = Math.sqrt(1 + vc * vc);
+        const gStr = gammaDisp >= 1000 ? gammaDisp.toExponential(6) : gammaDisp.toFixed(8);
+        elB.textContent = 'β=' + betaDisp.toFixed(12) + ' γ=' + gStr;
+      }
     }
     refreshUI();
 
@@ -776,6 +782,7 @@
         { key: 'decelPower',          label: 'decel curve',   min: 0.2,  max: 6,   step: 0.05 },
         { key: 'decelGaussianA',      label: 'gauss a (0=off)',min: 0,   max: 10,  step: 0.1 },
         { key: 'decelAtanA',          label: 'atan a (0=off)', min: 0,   max: 30,  step: 0.1 },
+        { key: 'decelMirrorAccel',    label: 'mirror accel',  min: 0,    max: 1,   step: 1 },
         { key: 'finalApproachVelC',   label: 'final v (c)',   min: 0.5,  max: 50,  step: 0.5 },
         { key: 'finalApproachSec',    label: 'final time (s)',min: 0.5,  max: 30,  step: 0.1 },
         { key: 'decelCorridorMul',    label: 'decel corridor',min: 1.2,  max: 10,  step: 0.1 },
@@ -2024,9 +2031,10 @@
               // (remaining/brakeWidth)^decelPower curve all the way down to
               // designSpeed at closeThreshold (no constant-designSpeed tail).
               const aT = Math.max(0.05, autoCfg.accelTimeSec);
-              const dT = Math.max(0.05, autoCfg.decelTimeSec || 0.6);
+              const mirrorAD = (autoCfg.decelMirrorAccel || 0) >= 0.5;
+              const dT = Math.max(0.05, mirrorAD ? aT : (autoCfg.decelTimeSec || 0.6));
               const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
-              const dPow = Math.max(0.2, autoCfg.decelPower);
+              const dPow = Math.max(0.2, mirrorAD ? autoCfg.accelPower : autoCfg.decelPower);
               const cruiseT = autopilotCruiseTime;
               const peakVel = Math.max(autopilotStartVel, autopilotPeakVel);
               const elapsedT = tAnimSec - autopilotTravelStart;
