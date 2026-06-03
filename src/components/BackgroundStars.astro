@@ -359,6 +359,8 @@
     let autopilotStartVel = 0;    // |v| at travel start — ramp begins from here so trips smoothly connect to the previous arrival
     let autopilotPeakVel = 0;     // peak velocity for this trip (time-based bell curve top)
     let autopilotCruiseTime = 0;  // seconds spent at peakVel between accel ramp and decel brake
+    let autopilotFinalStart = -1; // wall-clock sec when curveVel first dropped below finalApproachVelC (-1 = not yet)
+    let autopilotFinalEntryVel = 0; // velocity at the moment final approach engaged (used as ramp top)
     const autopilotVelHistory = []; // [{t, v}] samples since travel start, drawn as the actual-velocity overlay on the debug curve
     const VEL_HISTORY_LIMIT = 1024;
     let autopilotExpectedAccel = 0;    // sec spent in accel band (constant: accelTimeSec)
@@ -446,6 +448,8 @@
       arrivalSettleRate: 4,        // exponential rate for lookAtBody yaw/pitch tracking (higher = snappier)
       decelTimeSec: 2.5,           // brake duration in seconds — long by default so arrivals glide rather than slam
       decelGaussianA: 0,           // when > 0, brake follows e^(-a·x²) — low values (0.1) feel like a cliff; try ≥ 2 for a soft Gaussian shape
+      finalApproachVelC: 8,        // when brake curve naturally drops below this many c, switch to a time-based final approach
+      finalApproachSec: 3,         // seconds of slow linear ramp from finalApproachVelC down to designSpeed
       tripTimeMin: 3,              // minimum random travel time per trip (seconds)
       tripTimeMax: 10,             // maximum random travel time per trip (seconds) — picks peakVel to match
       preSearchDelaySec: 1.5,      // seconds of linger to warp before searching for the next POI
@@ -1073,6 +1077,8 @@
         { key: 'decelTimeSec',        label: 'brake time (s)',min: 0.2,  max: 15,  step: 0.1 },
         { key: 'decelPower',          label: 'decel curve',   min: 0.2,  max: 6,   step: 0.05 },
         { key: 'decelGaussianA',      label: 'gauss a (0=off)',min: 0,   max: 10,  step: 0.1 },
+        { key: 'finalApproachVelC',   label: 'final v (c)',   min: 0.5,  max: 50,  step: 0.5 },
+        { key: 'finalApproachSec',    label: 'final time (s)',min: 0.5,  max: 12,  step: 0.1 },
         { key: 'decelCorridorMul',    label: 'decel corridor',min: 1.2,  max: 10,  step: 0.1 },
         { key: 'decelOffsetSec',      label: 'decel delay (s)',min: 0,   max: 5,   step: 0.1 },
       ]},
@@ -2121,6 +2127,8 @@
           autopilotPhase = 'traveling';
           autopilotTravelStart = tAnimSec;
           autopilotBrakeStart = -1;
+          autopilotFinalStart = -1;
+          autopilotFinalEntryVel = 0;
           autopilotStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
           autopilotVelHistory.length = 0;
           {
@@ -2191,6 +2199,8 @@
                 autopilotPhase = 'traveling';
                 autopilotTravelStart = tAnimSec;
                 autopilotBrakeStart = -1;
+                autopilotFinalStart = -1;
+                autopilotFinalEntryVel = 0;
                 autopilotStartVel = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
                 autopilotVelHistory.length = 0;
                 {
@@ -2321,6 +2331,21 @@
                   ease = Math.pow(distU, dPow);
                 }
                 curveVel = designSpeed + (peakVel - designSpeed) * Math.max(0, Math.min(1, ease));
+              }
+              // Final-approach takeover: once the dist-based curve drops below
+              // finalApproachVelC × c, switch to a TIME-based linear ramp from
+              // that entry velocity down to designSpeed over finalApproachSec.
+              // Without this, the sub-c portion of the brake is covered in
+              // one frame at super-luminal peak velocities — the "cliff".
+              const finalThresh = Math.max(0.5, autoCfg.finalApproachVelC || 8) * C;
+              const finalT = Math.max(0.1, autoCfg.finalApproachSec || 3);
+              if (curveVel < finalThresh || autopilotFinalStart >= 0) {
+                if (autopilotFinalStart < 0) {
+                  autopilotFinalStart = tAnimSec;
+                  autopilotFinalEntryVel = Math.max(curveVel, designSpeed);
+                }
+                const fU = Math.max(0, Math.min(1, (tAnimSec - autopilotFinalStart) / finalT));
+                curveVel = autopilotFinalEntryVel + (designSpeed - autopilotFinalEntryVel) * fU;
               }
               const baseSpeed = Math.min(curveVel, safetyCap);
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
