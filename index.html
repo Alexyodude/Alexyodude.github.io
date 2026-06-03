@@ -169,8 +169,8 @@
       decelMirrorAccel: 0,         // 1 = mirror accel: decel uses accelTimeSec/accelPower instead of decelTimeSec/decelPower
       finalApproachVelC: 0,        // when > 0, brake curve drops to this many c then a linear ramp glides to designSpeed (causes derivative skip; off by default)
       finalApproachSec: 7,         // seconds of slow linear ramp from finalApproachVelC down to designSpeed (only used when finalApproachVelC > 0)
-      tripTimeMin: 3,              // minimum random travel time per trip (seconds)
-      tripTimeMax: 10,             // maximum random travel time per trip (seconds) — picks peakVel to match
+      tripTimeMin: 6,              // minimum random travel time per trip (seconds)
+      tripTimeMax: 16,             // maximum random travel time per trip (seconds) — picks peakVel to match
       preSearchDelaySec: 1.5,      // seconds of linger to warp before searching for the next POI
     };
     let autopilotTripTargetSec = 5; // randomized per trip (autoCfg.tripTimeMin..tripTimeMax)
