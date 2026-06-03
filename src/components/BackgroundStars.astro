@@ -711,7 +711,8 @@
       elY.textContent = fmt(cam[1]);
       elZ.textContent = fmt(cam[2]);
       elV.textContent = fmtVelocity(lastCamV);
-      elB.textContent = smoothBeta.toFixed(4) + (smoothBeta >= 0.998 ? ' (max)' : '');
+      const betaInstant = Math.min(0.999, lastCamV / C);
+      elB.textContent = betaInstant.toFixed(4) + (betaInstant >= 0.998 ? ' (max)' : '');
     }
     refreshUI();
 
