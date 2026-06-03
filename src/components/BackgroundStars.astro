@@ -431,7 +431,7 @@
       decelCorridorMul: 4,         // brake corridor — slowdown only kicks in inside threshold × this
       decelPower: 4,               // ease exponent — high values give a sharp initial decel that ramps down toward proximity
       designSpeedDivisor: 15,      // designSpeed = closeThreshold / (linger × this)
-      velocityLerp: 4,             // velocity smoothing rate during autopilot (post-block low-pass)
+      velocityLerp: 1,             // velocity smoothing rate during autopilot (post-block low-pass)
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this — 1e18 = ~3.3B·c (smoothness guaranteed by multiplicative ramp + stableCap)
       maxAngleChange: 0.524,       // 30° — picker's preferred forward cone (widens on fallback)
       accelTimeSec: 1.0,           // seconds to ramp from designSpeed up to baseSpeed at travel start
