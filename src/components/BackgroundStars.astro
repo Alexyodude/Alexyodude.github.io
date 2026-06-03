@@ -2618,11 +2618,16 @@
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
       const ccz = Math.floor(cam[2] / CHUNK_SIZE);
       // Relativistic β smoothed across frames so it ramps gradually instead of
-      // Relativistic β smoothed across frames so aberration / Doppler don't
-      // snap when v crosses through c. Slow lerp (rate ≈ 2) means the visual
-      // transition takes ~1.5s instead of ~80ms — the background relaxes
-      // continuously instead of jumping.
-      const targetBeta = Math.min(0.999, camV / C);
+      // β target uses the relativistic-momentum mapping
+      //   β = (v/c) / √(1 + (v/c)²)
+      // so β varies smoothly throughout the brake (including super-luminal
+      // phase) instead of saturating at 0.999 the moment v >= c. Without
+      // this, all visual SR effects (aberration / Doppler / time dilation /
+      // length contraction) freeze during cruise + most of decel and only
+      // change in the last fraction when v finally drops below c.
+      // Matches the γ readout = √(1 + (v/c)²) for self-consistency.
+      const vc = camV / C;
+      const targetBeta = Math.min(0.999, vc / Math.sqrt(1 + vc * vc));
       smoothBeta += (targetBeta - smoothBeta) * Math.min(1, dt * 2);
       const beta = smoothBeta;
 
