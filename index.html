@@ -139,6 +139,7 @@
       arrivalLookAtBody: 0,        // 0..1 — how strongly camera tracks the body during linger (0 = none, 1 = locked)
       arrivalSettleRate: 4,        // exponential rate for lookAtBody yaw/pitch tracking (higher = snappier)
       decelTimeSec: 2.5,           // brake duration in seconds — long by default so arrivals glide rather than slam
+      decelGaussianA: 0,           // when > 0, brake follows e^(-a·x²) on positive x (overrides decelPower)
       tripTimeMin: 3,              // minimum random travel time per trip (seconds)
       tripTimeMax: 10,             // maximum random travel time per trip (seconds) — picks peakVel to match
       preSearchDelaySec: 1.5,      // seconds of linger to warp before searching for the next POI
@@ -753,6 +754,7 @@
       { title: 'DECEL', specs: [
         { key: 'decelTimeSec',        label: 'brake time (s)',min: 0.2,  max: 15,  step: 0.1 },
         { key: 'decelPower',          label: 'decel curve',   min: 1,    max: 6,   step: 0.1 },
+        { key: 'decelGaussianA',      label: 'gauss a (0=off)',min: 0,   max: 10,  step: 0.1 },
         { key: 'decelCorridorMul',    label: 'decel corridor',min: 1.2,  max: 10,  step: 0.1 },
         { key: 'decelOffsetSec',      label: 'decel delay (s)',min: 0,   max: 5,   step: 0.1 },
       ]},
@@ -836,7 +838,17 @@
           v = plateau;
         } else {
           const t = (1 - u) / (1 - B);
-          v = Math.pow(t, dPow) * plateau;
+          const aG = autoCfg.decelGaussianA || 0;
+          let ease;
+          if (aG > 0) {
+            const x = 1 - t;
+            const tail = Math.exp(-aG);
+            ease = (Math.exp(-aG * x * x) - tail) / Math.max(1e-9, 1 - tail);
+            ease = Math.max(0, Math.min(1, ease));
+          } else {
+            ease = Math.pow(t, dPow);
+          }
+          v = ease * plateau;
         }
         const x = padL + u * plotW;
         const y = padT + plotH * (1 - v);
@@ -1940,11 +1952,21 @@
                   curveVel = peakVel;
                 }
               } else {
-                // Brake — distance-based power curve, so velocity drops
-                // continuously until closeThreshold is reached.
+                // Brake — distance-based curve. Default is the (distU)^decelPower
+                // power curve. If decelGaussianA > 0, switch to a Gaussian
+                // e^(-a·x²) on positive x = 1 - distU, normalized to vanish at
+                // distU = 0 so the curve still hits designSpeed at proximity.
                 const distU = Math.max(0, Math.min(1, (dist - closeThreshold) / brakeWidth));
-                const ease = Math.pow(distU, dPow);
-                curveVel = designSpeed + (peakVel - designSpeed) * ease;
+                const aG = autoCfg.decelGaussianA || 0;
+                let ease;
+                if (aG > 0) {
+                  const x = 1 - distU;
+                  const tail = Math.exp(-aG);
+                  ease = (Math.exp(-aG * x * x) - tail) / Math.max(1e-9, 1 - tail);
+                } else {
+                  ease = Math.pow(distU, dPow);
+                }
+                curveVel = designSpeed + (peakVel - designSpeed) * Math.max(0, Math.min(1, ease));
               }
               const baseSpeed = Math.min(curveVel, safetyCap);
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
