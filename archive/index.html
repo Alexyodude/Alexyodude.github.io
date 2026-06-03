@@ -140,6 +140,7 @@
       arrivalSettleRate: 4,        // exponential rate for lookAtBody yaw/pitch tracking (higher = snappier)
       decelTimeSec: 2.5,           // brake duration in seconds — long by default so arrivals glide rather than slam
       decelGaussianA: 0,           // when > 0, brake follows e^(-a·x²) — low values (0.1) feel like a cliff; try ≥ 2 for a soft Gaussian shape
+      decelAtanA: 0,               // when > 0, brake follows v = b·(π/2 − atan(a·x − π/2)) with x = 1-distU, normalized — sigmoid S-curve
       finalApproachVelC: 4,        // when brake curve naturally drops below this many c, switch to a time-based final approach
       finalApproachSec: 7,         // seconds of slow linear ramp from finalApproachVelC down to designSpeed
       tripTimeMin: 3,              // minimum random travel time per trip (seconds)
@@ -769,6 +770,7 @@
         { key: 'decelTimeSec',        label: 'brake time (s)',min: 0.2,  max: 15,  step: 0.1 },
         { key: 'decelPower',          label: 'decel curve',   min: 0.2,  max: 6,   step: 0.05 },
         { key: 'decelGaussianA',      label: 'gauss a (0=off)',min: 0,   max: 10,  step: 0.1 },
+        { key: 'decelAtanA',          label: 'atan a (0=off)', min: 0,   max: 30,  step: 0.1 },
         { key: 'finalApproachVelC',   label: 'final v (c)',   min: 0.5,  max: 50,  step: 0.5 },
         { key: 'finalApproachSec',    label: 'final time (s)',min: 0.5,  max: 30,  step: 0.1 },
         { key: 'decelCorridorMul',    label: 'decel corridor',min: 1.2,  max: 10,  step: 0.1 },
@@ -855,8 +857,19 @@
         } else {
           const t = (1 - u) / (1 - B);
           const aG = autoCfg.decelGaussianA || 0;
+          const aA = autoCfg.decelAtanA || 0;
           let ease;
-          if (aG > 0) {
+          if (aA > 0) {
+            // Preview curve sample: u in [B, 1] means t in [1, 0]. We want
+            // ease=1 at t=1 (curveVel = plateau) and ease=0 at t=0 (drift).
+            // x in [0, 1] mirrors physics where x = 1 - distU.
+            const x = 1 - t;
+            const r1 = Math.PI / 2 - Math.atan(-Math.PI / 2);
+            const r0 = Math.PI / 2 - Math.atan(aA - Math.PI / 2);
+            const rv = Math.PI / 2 - Math.atan(aA * x - Math.PI / 2);
+            ease = (rv - r0) / Math.max(1e-9, r1 - r0);
+            ease = Math.max(0, Math.min(1, ease));
+          } else if (aG > 0) {
             const x = 1 - t;
             const tail = Math.exp(-aG);
             ease = (Math.exp(-aG * x * x) - tail) / Math.max(1e-9, 1 - tail);
@@ -2014,8 +2027,17 @@
                 // distU = 0 so the curve still hits designSpeed at proximity.
                 const distU = Math.max(0, Math.min(1, (dist - closeThreshold) / brakeWidth));
                 const aG = autoCfg.decelGaussianA || 0;
+                const aA = autoCfg.decelAtanA || 0;
                 let ease;
-                if (aG > 0) {
+                if (aA > 0) {
+                  // ease = (π/2 − atan(a·x − π/2)) normalized to [0, 1] over x ∈ [1, 0]
+                  // (x = 1 - distU; ease=1 at distU=1, ease=0 at distU=0).
+                  const x = 1 - distU;
+                  const r1 = Math.PI / 2 - Math.atan(-Math.PI / 2);         // raw at distU=1 (x=0)
+                  const r0 = Math.PI / 2 - Math.atan(aA - Math.PI / 2);     // raw at distU=0 (x=1)
+                  const rv = Math.PI / 2 - Math.atan(aA * x - Math.PI / 2);
+                  ease = (rv - r0) / Math.max(1e-9, r1 - r0);
+                } else if (aG > 0) {
                   const x = 1 - distU;
                   const tail = Math.exp(-aG);
                   ease = (Math.exp(-aG * x * x) - tail) / Math.max(1e-9, 1 - tail);
