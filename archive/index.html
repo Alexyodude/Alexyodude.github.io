@@ -74,14 +74,12 @@
       const cruiseHold = Math.max(0, autoCfg.cruiseMinSec || 0);
       const decelDelay = Math.max(0, autoCfg.decelOffsetSec || 0);
       const startV = autopilotStartVel || 0;
-      // Final-approach reserves a fixed distance budget so the closed-form
-      // brake stops at finalApproachVelC·c, then the linear ramp covers the
-      // rest. Without subtracting it from D, peak is too high and the camera
-      // crawls at designSp for many seconds after the ramp completes.
       const finalSec = Math.max(0, autoCfg.finalApproachSec || 0);
-      const finalVc = Math.max(0.5, autoCfg.finalApproachVelC || 8) * C;
-      const finalDist = (finalVc + designSp) * 0.5 * finalSec;
-      const D = Math.max(0, autopilotOrigDist - cThr - finalDist);
+      // Do NOT subtract finalDist from D — for short trips that drives D≤0
+      // and clamps peak at designSpeed, locking the whole trip at 8e7 m/s.
+      // The final-approach phase naturally cuts short when the linger trigger
+      // fires (dist < closeThreshold), so no pre-reservation is needed.
+      const D = Math.max(0, autopilotOrigDist - cThr);
       // Closed-form solve.
       //   accelDist  = aT · (startV + (peak − startV) / (aPow + 1))
       //   cruiseDist = peak · cruiseTime
