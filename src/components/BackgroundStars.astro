@@ -2036,7 +2036,13 @@
         gravDilation = Math.sqrt(Math.max(0, 1 - ratio));
       }
       const isLingerFrozen = autopilot && autopilotPhase === 'lingering';
-      if (!isLingerFrozen) tAnimAccum += dt * gravDilation;
+      // Special-relativistic time dilation. From the moving camera's frame,
+      // external clocks tick by γ per camera-second. Uses the previous frame's
+      // smoothBeta (one-frame lag is invisible) capped at 0.999 so γ stays
+      // bounded at ~22.4 during super-luminal cruise.
+      const _betaTD = Math.min(0.999, smoothBeta);
+      const gammaTime = 1 / Math.sqrt(Math.max(1e-6, 1 - _betaTD * _betaTD));
+      if (!isLingerFrozen) tAnimAccum += dt * gravDilation * gammaTime;
       const tAnim = tAnimAccum;
 
       // Camera basis vectors from yaw/pitch (right-handed; +Y is screen-down, +Z is forward).
@@ -2644,7 +2650,7 @@
         const cosTvel = _item.cosTvel;
 
         if (_item.type === 'star') {
-          const angRad = obj.physRadius / 1e15 * proj.k;
+          const angRad = obj.physRadius / 1e15 * proj.k / gammaTime;
           if (angRad > 6) {
             const tex = getStarTexture(obj);
             ctx.drawImage(tex, proj.px - angRad, proj.py - angRad, angRad * 2, angRad * 2);
@@ -2744,7 +2750,7 @@
           }
 
         } else if (_item.type === 'planet') {
-          const rad = obj.physRadius / 1e15 * proj.k;
+          const rad = obj.physRadius / 1e15 * proj.k / gammaTime;
           if (rad < 0.6) {
             // Dot sized at `rad * 2` matches the gradient-disc diameter at
             // the next LOD tier (rad=0.6) — no visible jump from dot to blob.
@@ -2784,7 +2790,7 @@
           }
 
         } else if (_item.type === 'nebula') {
-          const rad = Math.min(4000, obj.physRadius / 1e15 * proj.k);
+          const rad = Math.min(4000, obj.physRadius / 1e15 * proj.k / gammaTime);
           if (rad < 8) continue;
           ctx.globalCompositeOperation = dark ? 'lighter' : 'multiply';
           const grad = ctx.createRadialGradient(proj.px, proj.py, 0, proj.px, proj.py, rad);
@@ -2839,7 +2845,7 @@
           applyDopplerTint(proj.px, proj.py, rad, cosTvel);
 
         } else if (_item.type === 'blackhole') {
-          const rEH = Math.min(800, obj.physRadius / 1e15 * proj.k);
+          const rEH = Math.min(800, obj.physRadius / 1e15 * proj.k / gammaTime);
           if (rEH < 2) continue;
           const rHalo = rEH * 6;
           const halo = ctx.createRadialGradient(proj.px, proj.py, rEH * 0.5, proj.px, proj.py, rHalo);
