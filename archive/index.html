@@ -2040,9 +2040,9 @@
               let curveVel;
               if (dist > brakeStartDist) {
                 // Re-entering accel/cruise (e.g. fly-by overshoot bounce-back):
-                // clear any latched final-approach state so a stale
-                // autopilotFinalStart from the inbound pass doesn't pin
-                // velocity at designSpeed when we cross back into the brake.
+                // clear any latched brake/final-approach state so stale timestamps
+                // from the inbound pass don't pin velocity when we cross back in.
+                if (autopilotBrakeStart >= 0) autopilotBrakeStart = -1;
                 if (autopilotFinalStart >= 0) {
                   autopilotFinalStart = -1;
                   autopilotFinalEntryVel = 0;
@@ -2059,30 +2059,35 @@
                   curveVel = peakVel;
                 }
               } else {
-                // Brake — distance-based curve. Default is the (distU)^decelPower
-                // power curve. If decelGaussianA > 0, switch to a Gaussian
-                // e^(-a·x²) on positive x = 1 - distU, normalized to vanish at
-                // distU = 0 so the curve still hits designSpeed at proximity.
-                const distU = Math.max(0, Math.min(1, (dist - closeThreshold) / brakeWidth));
+                // Brake — TIME-based curve. decelTimeSec actually controls how
+                // long the deceleration takes (was distance-based, where the
+                // sub-c portion collapsed to one frame at super-luminal peak).
+                //   v(t) = designSp + (brakeStartVel − designSp) · ease(brakeU)
+                //   brakeU = (tAnimSec − autopilotBrakeStart) / decelTimeSec
+                // ease(u) goes from 1 at u=0 (just entered brake) to 0 at u=1
+                // (brake duration elapsed). Power / Gaussian / atan all share
+                // the same role: `1 - u` maps to "fraction of brake remaining".
+                if (autopilotBrakeStart < 0) {
+                  autopilotBrakeStart = tAnimSec;
+                }
+                const brakeT = tAnimSec - autopilotBrakeStart;
+                const brakeU = Math.max(0, Math.min(1, brakeT / dT));
                 const aG = autoCfg.decelGaussianA || 0;
                 const aA = autoCfg.decelAtanA || 0;
                 let ease;
                 if (aA > 0) {
-                  // ease = (π/2 − atan(a·x − π/2)) normalized to [0, 1] over x ∈ [1, 0]
-                  // π is the 6-digit literal 3.141593 so the curve matches the
-                  // graph plotted in Desmos / on paper at that precision.
                   const PI6 = 3.141593;
-                  const x = 1 - distU;
+                  const x = brakeU;
                   const r1 = PI6 / 2 - Math.atan(-PI6 / 2);
                   const r0 = PI6 / 2 - Math.atan(aA - PI6 / 2);
                   const rv = PI6 / 2 - Math.atan(aA * x - PI6 / 2);
                   ease = (rv - r0) / Math.max(1e-9, r1 - r0);
                 } else if (aG > 0) {
-                  const x = 1 - distU;
+                  const x = brakeU;
                   const tail = Math.exp(-aG);
                   ease = (Math.exp(-aG * x * x) - tail) / Math.max(1e-9, 1 - tail);
                 } else {
-                  ease = Math.pow(distU, dPow);
+                  ease = Math.pow(1 - brakeU, dPow);
                 }
                 curveVel = designSpeed + (peakVel - designSpeed) * Math.max(0, Math.min(1, ease));
               }
