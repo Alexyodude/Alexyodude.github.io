@@ -1937,6 +1937,36 @@
             if (autopilotPhase === 'traveling' && pcDist < pCloseThreshold) {
               autopilotPhase = 'lingering';
               autopilotLingerStart = tAnimSec;
+              // Redirect velocity to be PERPENDICULAR to the camera-to-body
+              // vector so the linger drift carries the camera past the body
+              // tangentially instead of straight through its center.
+              // Project the radial component out of velocity, renormalize to
+              // preserve the original speed.
+              {
+                const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+                if (vMag > 1 && pcDist > 1) {
+                  const ux = pcdx / pcDist, uy = pcdy / pcDist, uz = pcdz / pcDist;
+                  const vDot = velocity[0] * ux + velocity[1] * uy + velocity[2] * uz;
+                  let tx = velocity[0] - vDot * ux;
+                  let ty = velocity[1] - vDot * uy;
+                  let tz = velocity[2] - vDot * uz;
+                  const tMag = Math.sqrt(tx*tx + ty*ty + tz*tz);
+                  if (tMag > 1) {
+                    velocity[0] = tx / tMag * vMag;
+                    velocity[1] = ty / tMag * vMag;
+                    velocity[2] = tz / tMag * vMag;
+                  } else {
+                    // Velocity was perfectly radial — pick any orthogonal
+                    // axis (cross with world up; if collinear, world right).
+                    let nx = uy, ny = -ux, nz = 0;
+                    let nMag = Math.sqrt(nx*nx + ny*ny);
+                    if (nMag < 1e-6) { nx = 1; ny = 0; nz = 0; nMag = 1; }
+                    velocity[0] = nx / nMag * vMag;
+                    velocity[1] = ny / nMag * vMag;
+                    velocity[2] = nz / nMag * vMag;
+                  }
+                }
+              }
               // Hold off on prepareNextTarget — let the camera warp for
               // preSearchDelaySec first (see linger branch below). The
               // delayed search lets the user see the body for a moment
