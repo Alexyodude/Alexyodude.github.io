@@ -929,15 +929,22 @@
           const dtS = Math.max(1e-6, autopilotVelHistory[i].t - autopilotVelHistory[i - 1].t);
           rawAccels.push({ t: autopilotVelHistory[i].t, a: Math.abs(dv / dtS) });
         }
-        const W = 5;
+        // Heavy Gaussian smoothing — fp noise at super-luminal velocities
+        // dominates raw |dv/dt|, so we use a wide σ kernel (≈20 samples).
+        const SIGMA = 20;
+        const KERNEL_HALF = 3 * SIGMA;
         const accels = [];
         for (let i = 0; i < rawAccels.length; i++) {
-          let sum = 0, count = 0;
-          for (let j = Math.max(0, i - W); j <= Math.min(rawAccels.length - 1, i + W); j++) {
-            sum += rawAccels[j].a;
-            count++;
+          let sum = 0, wSum = 0;
+          const jMin = Math.max(0, i - KERNEL_HALF);
+          const jMax = Math.min(rawAccels.length - 1, i + KERNEL_HALF);
+          for (let j = jMin; j <= jMax; j++) {
+            const dj = j - i;
+            const w = Math.exp(-dj * dj / (2 * SIGMA * SIGMA));
+            sum += rawAccels[j].a * w;
+            wSum += w;
           }
-          const a = sum / count;
+          const a = wSum > 0 ? sum / wSum : 0;
           accels.push({ t: rawAccels[i].t, a });
           if (a > peakAccel) peakAccel = a;
         }
