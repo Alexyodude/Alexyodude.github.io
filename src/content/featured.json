@@ -1,9 +1,9 @@
 [
   {
     "title": "OpenGL Sandbox",
-    "description": "C++ pixel sandbox with Conway's Game of Life, gravity, heat sims, and WASD player movement. Built from scratch pre-AI in raw OpenGL 3.3 + GLFW + ImGui. Web port via Claude in progress; Windows download below.",
+    "description": "C++ mass/wave simulation on a 500×500 toroidal grid — mass radiates a diffusing field, and cells follow its gradient but repel on contact and trade momentum when they collide. WASD propels you by injecting a dipole into the field rather than moving you directly. Built from scratch pre-AI in raw OpenGL 3.3 + GLFW + GLEW + ImGui. Companion GPU compute experiments — Conway's Game of Life, directional gravity, heat diffusion — live on separate branches. Web port via Claude in progress; Windows, macOS and Linux downloads below.",
     "repo": "https://github.com/Alexyodude/OpenGL",
-    "demo": "/games/OpenGL.exe",
+    "demo": "https://github.com/Alexyodude/OpenGL/releases/tag/v1.0.0",
     "tags": ["C++", "OpenGL", "GLFW", "ImGui"]
   },
   {

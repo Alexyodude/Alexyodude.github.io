@@ -23,6 +23,7 @@ function primaryLabel(url: string): string {
 
 function secondaryLabel(url: string): string {
   if (url.endsWith('.exe') || url.endsWith('.zip') || url.endsWith('.dmg')) return 'Download';
+  if (url.includes('/releases')) return 'Downloads';
   return 'Demo';
 }
 ---
