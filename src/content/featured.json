@@ -1,17 +1,17 @@
 [
   {
     "title": "OpenGL Sandbox",
-    "description": "C++ mass/wave simulation on a 500×500 toroidal grid — mass radiates a diffusing field, and cells follow its gradient but repel on contact and trade momentum when they collide. WASD propels you by injecting a dipole into the field rather than moving you directly. Built from scratch pre-AI in raw OpenGL 3.3 + GLFW + GLEW + ImGui. Companion GPU compute experiments — Conway's Game of Life, directional gravity, heat diffusion — live on separate branches. Web port via Claude in progress; Windows, macOS and Linux downloads below.",
+    "description": "C++ mass/wave simulation on a 500×500 toroidal grid — mass pulls, collides, and trades momentum. Built from scratch pre-AI in raw OpenGL 3.3 + GLFW + ImGui. Web port via Claude in progress; Windows, macOS and Linux downloads below.",
     "repo": "https://github.com/Alexyodude/OpenGL",
     "demo": "https://github.com/Alexyodude/OpenGL/releases/tag/v1.0.0",
     "tags": ["C++", "OpenGL", "GLFW", "ImGui"]
   },
   {
     "title": "mutual™",
-    "description": "Camera hardware that cryptographically signs video at the moment of capture — before any software can touch it. If a single frame is altered, the signature breaks. Proof of authenticity for forensics, insurance, and legal evidence.",
+    "description": "AnchorCam Stereo — two global-shutter sensors, an IMU and a mic on one 23 × 74.5 mm board with a 1 TOPS NPU. The camera you collect data with and the one the robot carries are the same part, so training and inference see the same optics.",
     "repo": "https://mutual.solutions",
     "demo": null,
-    "tags": ["Startup", "Hardware", "Cryptography"]
+    "tags": ["Startup", "Hardware", "Robotics", "Stereo Vision"]
   },
   {
     "title": "artefact(s): LeNet-1",
