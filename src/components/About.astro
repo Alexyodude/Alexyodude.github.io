@@ -11,7 +11,9 @@ type Entry = {
 const entries = (timeline as Entry[]).slice().reverse();
 ---
 
-<section class="glass px-6 py-16 max-w-3xl mx-auto md:my-8">
+<!-- mt-28 pairs with the hero's mb-28 for the mobile gap (they collapse to one
+     28-unit space); my-8 takes over from md up. -->
+<section class="glass px-6 py-16 max-w-3xl mx-auto mt-28 md:my-8">
   <div id="timeline-row" class="timeline-row" role="region" aria-label="Life timeline">
     <div class="timeline-content" role="list">
       <span class="timeline-track" aria-hidden="true"></span>
