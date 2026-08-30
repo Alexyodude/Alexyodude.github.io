@@ -6,6 +6,10 @@
 // Visitors can teleport to any coordinate.
 ---
 
+<!-- Star dots render on the WebGL layer; bodies (planets, black holes,
+     nebulae, close-up stars) render on the 2d canvas stacked above it, so
+     they naturally occlude the field behind them. -->
+<canvas id="bg-stars-gl" aria-hidden="true"></canvas>
 <canvas id="bg-stars" aria-hidden="true"></canvas>
 
 <aside id="coord-panel" class="hidden md:block">
@@ -36,7 +40,7 @@
     <button type="button" class="coord-visit" data-type="nebula">nebula</button>
     <button type="button" class="coord-visit" data-type="blackhole">black hole</button>
   </div>
-  <div class="coord-help">WASD warp (hold = ramp) · Q/E up/down · right-click drag to look · two-finger drag + pinch on touch</div>
+  <div class="coord-help">WASD warp (hold = ramp) · Q/E up/down · pinch to thrust on touch</div>
 </aside>
 
 <aside id="deep-debug-panel" class="hidden" aria-hidden="true">
@@ -68,14 +72,17 @@
 </aside>
 
 <style>
-  #bg-stars {
+  #bg-stars,
+  #bg-stars-gl {
     position: fixed;
     inset: 0;
     width: 100vw;
     height: 100vh;
-    z-index: 0;
     pointer-events: none;
   }
+  /* Both share z-index 0 — DOM order stacks the 2d body canvas above the GL
+     star layer without disturbing the page's existing stacking contexts. */
+  #bg-stars-gl, #bg-stars { z-index: 0; }
   #coord-panel {
     position: fixed;
     left: 1rem;
@@ -324,6 +331,127 @@
     if (!canvas) return;
     const ctx = canvas.getContext('2d', { alpha: true });
 
+    // ===== WebGL star layer =====
+    // Star DOTS draw here as GPU point sprites; everything with structure
+    // (planets, black holes, nebulae, close-up stars) stays on the 2d canvas
+    // stacked above. Rationale: canvas2d spent ~33ms/frame blitting the field
+    // at full density — the draw was the bottleneck, never the math — while a
+    // single drawArrays(POINTS) renders the same field in well under a
+    // millisecond and the glow falls out of the fragment shader for free.
+    // Projection, aberration, Doppler, beaming and twinkle all stay in JS:
+    // this layer receives finished screen-space points, so the physics has
+    // exactly one implementation. No library: two shaders and one buffer
+    // don't justify a dependency (the site ships zero runtime JS deps).
+    const glCanvas = document.getElementById('bg-stars-gl');
+    const starGL = (() => {
+      if (!glCanvas) return null;
+      const gl = glCanvas.getContext('webgl', { alpha: true, antialias: false, depth: false, premultipliedAlpha: true });
+      if (!gl) return null; // caller falls back to 2d dots
+      const VS = `
+        attribute vec2 a_pos;      // CSS px, origin top-left
+        attribute float a_size;    // core diameter, CSS px
+        attribute vec4 a_color;    // rgb 0..1, a = alpha
+        uniform vec2 u_res;        // CSS px
+        uniform float u_dpr;
+        // mediump to match the fragment stage — WebGL1 refuses to link a
+        // program whose shared uniforms differ in precision.
+        uniform mediump float u_glow; // sprite/core diameter ratio
+        varying vec4 v_color;
+        void main() {
+          vec2 clip = (a_pos / u_res) * 2.0 - 1.0;
+          gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+          gl_PointSize = max(1.0, a_size * u_glow * u_dpr);
+          v_color = a_color;
+        }`;
+      // Radial profile mirrors the measured reference falloff: a hot core out
+      // to ~1/glow of the sprite, then a faint wide skirt. smoothstep keeps
+      // both lobes analytic — no texture fetch, no sprite cache.
+      const FS = `
+        precision mediump float;
+        varying vec4 v_color;
+        uniform float u_glow;
+        uniform float u_haloA;
+        void main() {
+          float d = length(gl_PointCoord - 0.5) * 2.0;   // 0 centre → 1 edge
+          float core = 1.0 - smoothstep(0.0, 1.6 / u_glow, d);
+          float skirt = (1.0 - smoothstep(0.1, 1.0, d)) * u_haloA;
+          float w = v_color.a * min(1.0, core + skirt);
+          gl_FragColor = vec4(v_color.rgb * w, w);       // premultiplied
+        }`;
+      function sh(type, src) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src); gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.warn('starGL shader:', gl.getShaderInfoLog(s)); return null; }
+        return s;
+      }
+      const vs = sh(gl.VERTEX_SHADER, VS), fs = sh(gl.FRAGMENT_SHADER, FS);
+      if (!vs || !fs) return null;
+      const prog = gl.createProgram();
+      gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.warn('starGL link:', gl.getProgramInfoLog(prog)); return null; }
+      gl.useProgram(prog);
+      const loc = {
+        pos: gl.getAttribLocation(prog, 'a_pos'),
+        size: gl.getAttribLocation(prog, 'a_size'),
+        color: gl.getAttribLocation(prog, 'a_color'),
+        res: gl.getUniformLocation(prog, 'u_res'),
+        dpr: gl.getUniformLocation(prog, 'u_dpr'),
+        glow: gl.getUniformLocation(prog, 'u_glow'),
+        haloA: gl.getUniformLocation(prog, 'u_haloA'),
+      };
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      const STRIDE = 7; // px, py, size, r, g, b, a
+      let data = new Float32Array(STRIDE * 20000);
+      let n = 0;
+      gl.enableVertexAttribArray(loc.pos);
+      gl.enableVertexAttribArray(loc.size);
+      gl.enableVertexAttribArray(loc.color);
+      const BYTES = STRIDE * 4;
+      gl.vertexAttribPointer(loc.pos, 2, gl.FLOAT, false, BYTES, 0);
+      gl.vertexAttribPointer(loc.size, 1, gl.FLOAT, false, BYTES, 8);
+      gl.vertexAttribPointer(loc.color, 4, gl.FLOAT, false, BYTES, 12);
+      return {
+        resize(w, h, dprV) {
+          glCanvas.width = w * dprV; glCanvas.height = h * dprV;
+          glCanvas.style.width = w + 'px'; glCanvas.style.height = h + 'px';
+          gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+          gl.uniform2f(loc.res, w, h);
+          gl.uniform1f(loc.dpr, dprV);
+        },
+        begin() { n = 0; },
+        // dark mode: near-white points, additive — overlapping glows sum like
+        // light. light mode: dark points over the light page, normal blend.
+        push(px, py, size, r, g, b, a) {
+          const i = n * STRIDE;
+          if (i + STRIDE > data.length) {
+            const grown = new Float32Array(data.length * 2);
+            grown.set(data); data = grown;
+          }
+          data[i] = px; data[i+1] = py; data[i+2] = size;
+          data[i+3] = r / 255; data[i+4] = g / 255; data[i+5] = b / 255; data[i+6] = a;
+          n++;
+        },
+        flush(dark, glowScale, haloAlpha) {
+          // Light mode carries the page wash here (premultiplied) — it used to
+          // be painted on the 2d canvas, which now sits ABOVE this layer and
+          // would mute every star under it.
+          if (dark) gl.clearColor(0, 0, 0, 0);
+          else gl.clearColor(0.9608 * 0.5, 0.9686 * 0.5, 0.9804 * 0.5, 0.5);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          if (!n) return;
+          gl.enable(gl.BLEND);
+          if (dark) gl.blendFunc(gl.ONE, gl.ONE);                    // additive
+          else gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);        // premult over
+          gl.uniform1f(loc.glow, glowScale);
+          gl.uniform1f(loc.haloA, haloAlpha);
+          gl.bufferData(gl.ARRAY_BUFFER, data.subarray(0, n * STRIDE), gl.DYNAMIC_DRAW);
+          gl.drawArrays(gl.POINTS, 0, n);
+        },
+        count() { return n; },
+      };
+    })();
+
     // ===== world constants =====
     const STORAGE_KEY = 'universe.cam.v2';
     const RENDER_DISTANCE = 2e19;   // meters — about 2100 light-years
@@ -341,8 +469,27 @@
 
     // ===== state =====
     let cam = readInitial();
-    let yaw = 0;     // rotation around world Y axis (right-click drag horizontal)
-    let pitch = 0;   // rotation around camera-local X axis (right-click drag vertical)
+    // The viewer always looks along the direction of travel. There is still no
+    // independent camera rotation — nothing aims the view but motion itself.
+    // `viewDir` eases toward the velocity vector instead of copying it, so a
+    // sudden heading change (autopilot handing off to a new target) reads as a
+    // turn rather than a cut.
+    const viewDir = [0, 0, 1];
+    // How fast the VELOCITY vector may turn, deg/sec (see the rate limiter at
+    // the integration site). The view then chases this at VIEW_TURN_RATE, so
+    // total transition feel = this sweep + the view's easing behind it.
+    const VEL_TURN_RATE = 50;
+    const lastVelDir = [0, 0, 1];
+    let lastVelDirMag = 0;
+    const VIEW_TURN_RATE = 0.9; // exponential easing rate; higher = snappier.
+    // 0.9 gives a ~1.1s time constant, so a full heading change plays out over
+    // ~3s — a slow cinematic bank. The cost of going low is lag: the view
+    // points slightly off-heading while a turn is in progress. Below ~0.5 the
+    // lag stops feeling like banking and starts feeling like drifting sideways.
+    // Derived from viewDir once per frame, purely so the debug panel and the
+    // deep-state dump have something meaningful to report.
+    let yaw = 0;
+    let pitch = 0;
     let drifting = true;
     let lastCamV = 0; // last frame's instantaneous speed (m/s), used by UI
     let smoothBeta = 0; // β smoothed across frames — gives a gradual ramp on Shift warp
@@ -458,7 +605,7 @@
       designSpeedDivisor: 15,      // designSpeed = closeThreshold / (linger × this)
       velocityLerp: 1,             // velocity smoothing rate during autopilot (post-block low-pass)
       maxWarpExp: 18,              // ceiling on autopilot warp speed in m/s = 10^this — 1e18 = ~3.3B·c (smoothness guaranteed by multiplicative ramp + stableCap)
-      maxAngleChange: 0.524,       // 30° — picker's preferred forward cone (widens on fallback)
+      maxAngleChange: 0.524,       // 30° — hard forward cone, no fallback widening. The view follows the heading, so this caps how far it swings when a new leg begins. Lower it for gentler transitions (at the cost of more straight drifting between targets).
       accelTimeSec: 1.0,           // seconds to ramp from designSpeed up to baseSpeed at travel start
       accelPower: 2.3,             // ramp curve exponent (1=linear, 2=ease-in quad, 3=cubic, 4=quart)
       flybyOffset: 0,              // perpendicular fly-by offset, in multiples of closeThreshold (0 = head-on, 2 = pass at 2× approach radius)
@@ -468,8 +615,6 @@
       arrivalDriftFrac: 1.0,       // linger drift speed as fraction of designSpeed (used only when passByVelC = 0)
       passByVelC: 3,               // linger drift speed in units of c — set the absolute pass-by velocity directly. 0 = use arrivalDriftFrac legacy formula
       arrivalHoldSec: 0,           // hold motionless at arrival for N sec before drifting (a dramatic "we're here" pause)
-      arrivalLookAtBody: 0,        // 0..1 — how strongly camera tracks the body during linger (0 = none, 1 = locked)
-      arrivalSettleRate: 4,        // exponential rate for lookAtBody yaw/pitch tracking (higher = snappier)
       decelTimeSec: 2.5,           // brake duration in seconds — long by default so arrivals glide rather than slam
       decelGaussianA: 0,           // when > 0, brake follows e^(-a·x²) — low values (0.1) feel like a cliff; try ≥ 2 for a soft Gaussian shape
       decelAtanA: 0,               // when > 0, brake follows v = b·(π/2 − atan(a·x − π/2)) with x = 1-distU, normalized — sigmoid S-curve
@@ -490,6 +635,7 @@
     }
     const AUTOPILOT_TYPES = ['planet', 'star', 'blackhole'];
     let lastFrameMs = performance.now();
+    let simClockSec = 0; // accumulated capped dt — the autopilot schedule clock
     let lastSavedMs = 0;
     let lastNearestD = Infinity; // distance to closest object, tracked each frame for auto-slowdown
     let lastNearestR = 0;        // physical radius of that object — sets a minimum movement speed
@@ -517,6 +663,31 @@
     function savePosition() {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cam)); } catch {}
     }
+    // URL sync is deliberately infrequent. Chrome records same-document
+    // navigations in its history database, so rewriting the URL on the render
+    // cadence — this used to fire every 500 ms, ~6800 writes an hour — floods
+    // the visitor's browser history with thousands of near-identical
+    // coordinate URLs and leaves the address bar visibly churning.
+    //
+    // Nothing depends on that frequency. Position persistence is localStorage's
+    // job and still runs every 500 ms; the URL exists only so a coordinate can
+    // be shared. So it is refreshed on deliberate navigation, on a slow idle
+    // cadence while actually travelling, and once as the page goes away.
+    const URL_SYNC_MS = 30000;
+    let lastUrlMs = -Infinity;
+    // Seeded from the position we loaded with, so arriving via a shared link
+    // and not moving writes nothing — the URL is already correct.
+    let lastUrlPos = [cam[0], cam[1], cam[2]];
+    // Below this the camera hasn't meaningfully gone anywhere, so a rewrite
+    // would add a history entry pointing essentially where the last one did.
+    const URL_MIN_MOVE = CHUNK_SIZE * 0.05;
+    function urlPosStale() {
+      if (!lastUrlPos) return true;
+      const dx = cam[0] - lastUrlPos[0];
+      const dy = cam[1] - lastUrlPos[1];
+      const dz = cam[2] - lastUrlPos[2];
+      return dx * dx + dy * dy + dz * dz > URL_MIN_MOVE * URL_MIN_MOVE;
+    }
     function updateUrl() {
       try {
         const u = new URL(location.href);
@@ -524,8 +695,23 @@
         u.searchParams.set('y', cam[1].toExponential(3));
         u.searchParams.set('z', cam[2].toExponential(3));
         history.replaceState(null, '', u.pathname + u.search + u.hash);
+        lastUrlPos = [cam[0], cam[1], cam[2]];
       } catch {}
     }
+    // A parked camera writes nothing at all; a drifting one writes at most
+    // twice a minute.
+    function maybeUpdateUrl(nowMs) {
+      if (nowMs - lastUrlMs < URL_SYNC_MS) return;
+      lastUrlMs = nowMs;
+      if (urlPosStale()) updateUrl();
+    }
+    // Final flush, so a link copied after the tab is backgrounded or a reload
+    // that restores the page still lands on where the visitor actually was.
+    const flushUrl = () => { if (urlPosStale()) updateUrl(); };
+    window.addEventListener('pagehide', flushUrl);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushUrl();
+    });
 
     // ===== deterministic PRNG seeded from chunk coords =====
     function hashChunk(x, y, z) {
@@ -608,6 +794,38 @@
       [120, 200, 180],
     ];
 
+    // Background stars added to EVERY chunk, on top of the sparse "interesting
+    // body" roll below. Without these the sky is empty: only ~205 chunks fall
+    // inside the view frustum and the body roll yields ~0.36 stars each, so
+    // open space renders about 100 visible stars where a rich field needs
+    // ~1000. These are scenery only — they are excluded from autopilot targets
+    // and from the "visit star" search, so the tour still flies to real,
+    // fully-featured stars. Cost is linear in chunks scanned, so this is the
+    // one knob to turn down if the frame rate suffers on weak hardware.
+    const BG_STARS_PER_CHUNK = 8;
+    // Scenery draw radius, as a fraction of RENDER_DISTANCE. Under canvas2d
+    // this had to sit at 0.45 — at full radius ~18,000 stars reached the
+    // screen (relativistic aberration folds the whole sky into the forward
+    // cone, so the off-screen cull never fires at cruise) and blitting them
+    // cost ~25ms a frame. The GL point layer draws the same field in well
+    // under a millisecond, so the radius is back to full and the per-chunk
+    // count is higher: the JS collection loop is now the only real cost
+    // (~4-6ms at ~25k stars). If a low-end machine struggles, lower these two
+    // first.
+    const BG_RENDER_FRAC = 1.0;
+    // Light mode keeps the old, much shorter scenery radius. Dark stars on a
+    // light page only ever worked as a sparse whisper — at full density the
+    // aberration-focused cluster renders as a black ink-blot behind the hero
+    // text. Light mode is about the page, not the universe.
+    const BG_RENDER_FRAC_LIGHT = 0.45;
+    const BG_RENDER_D2_LIGHT = (RENDER_DISTANCE * BG_RENDER_FRAC_LIGHT) * (RENDER_DISTANCE * BG_RENDER_FRAC_LIGHT);
+    const BG_RENDER_D2 = (RENDER_DISTANCE * BG_RENDER_FRAC) * (RENDER_DISTANCE * BG_RENDER_FRAC);
+    // `depth` is 1 at the camera and 0 at RENDER_DISTANCE, so the cull edge
+    // sits at this depth. Scenery fades out across a band just inside it,
+    // otherwise stars would pop into existence as the camera advances.
+    const BG_FADE_DEPTH = 1 - BG_RENDER_FRAC;
+    const BG_FADE_BAND = 0.08;
+
     // ===== chunk generator =====
     function generateChunk(chx, chy, chz) {
       const r = mulberry32(hashChunk(chx, chy, chz));
@@ -663,6 +881,24 @@
         }
         out.push(obj);
       }
+      // Scenery layer. Same spectral distribution as real stars so the field
+      // keeps its colour character, but marked `bg` and given no features
+      // worth flying to. Drawn from the SAME rng stream, after the body roll,
+      // so a chunk's contents stay fully determined by its coordinates.
+      for (let i = 0; i < BG_STARS_PER_CHUNK; i++) {
+        const cls = pickSpectral(r());
+        out.push({
+          wx: chx * CHUNK_SIZE + r() * CHUNK_SIZE,
+          wy: chy * CHUNK_SIZE + r() * CHUNK_SIZE,
+          wz: chz * CHUNK_SIZE + r() * CHUNK_SIZE,
+          type: 'star',
+          bg: true,
+          cr: cls[1][0], cg: cls[1][1], cb: cls[1][2],
+          sizeMul: cls[3],
+          physRadius: cls[4] * (0.7 + r() * 0.6),
+          bri: 0.5 + r() * 0.5,
+        });
+      }
       return out;
     }
 
@@ -696,6 +932,7 @@
       canvas.style.width = W + 'px';
       canvas.style.height = H + 'px';
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (starGL) starGL.resize(W, H, dpr);
       cx = W / 2; cy = H / 2;
       focal = Math.max(W, H) * FOCAL_BASE;
     }
@@ -978,7 +1215,7 @@
       if (deepSectionsEnabled.time && s.time) {
         lines.push('[TIME]');
         lines.push('  tAnim    : ' + fmt(s.time.tAnim) + '  s (frozen during linger)');
-        lines.push('  tAnimSec : ' + fmt(s.time.tAnimSec) + '  s (wall clock)');
+        lines.push('  tAnimSec : ' + fmt(s.time.tAnimSec) + '  s (sim clock)');
         lines.push('  dt       : ' + fmt(s.time.dt) + '  s');
         lines.push('  fps      : ' + fmt(s.time.fps));
         lines.push('');
@@ -1135,8 +1372,6 @@
         { key: 'arrivalHoldSec',      label: 'hold pause (s)',min: 0,    max: 5,   step: 0.1 },
         { key: 'arrivalDriftFrac',    label: 'drift fraction',min: 0,    max: 2,   step: 0.05 },
         { key: 'passByVelC',          label: 'pass-by v (c)', min: 0,    max: 20,  step: 0.1 },
-        { key: 'arrivalLookAtBody',   label: 'look at body',  min: 0,    max: 1,   step: 0.05 },
-        { key: 'arrivalSettleRate',   label: 'look settle',   min: 0.5,  max: 12,  step: 0.1 },
         { key: 'linger',              label: 'linger (s)',    min: 1,    max: 20,  step: 0.5 },
         { key: 'preSearchDelaySec',   label: 'warp b4 search',min: 0,    max: 10,  step: 0.1 },
         { key: 'designSpeedDivisor',  label: 'drift slowness',min: 1,    max: 12,  step: 0.5 },
@@ -1476,33 +1711,12 @@
     });
     window.addEventListener('blur', () => keys.clear());
 
-    // ===== Right-click drag rotation =====
-    let dragging = false;
-    let dragX = 0, dragY = 0, dragYaw = 0, dragPitch = 0;
-    const PITCH_LIMIT = Math.PI / 2 - 0.05;
-    document.addEventListener('mousedown', (e) => {
-      if (e.button !== 2) return;
-      // Ignore clicks on the floating panel
-      if (e.target && e.target.closest && e.target.closest('#coord-panel')) return;
-      dragging = true;
-      dragX = e.clientX; dragY = e.clientY;
-      dragYaw = yaw; dragPitch = pitch;
-      e.preventDefault();
-    });
-    window.addEventListener('mousemove', (e) => {
-      if (!dragging) return;
-      const sens = 0.0035;
-      // FPS look convention: drag right → look right, drag down → look down.
-      // Pitch is negated because world +Y points down (screen-down) while
-      // "looking down" requires forward.y > 0, i.e. pitch < 0.
-      yaw   = dragYaw   + (e.clientX - dragX) * sens;
-      pitch = dragPitch - (e.clientY - dragY) * sens;
-      pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
-    });
-    window.addEventListener('mouseup', (e) => { if (e.button === 2) dragging = false; });
+    // Right-click drag rotation removed. The view turns only to follow the
+    // direction of travel; nothing aims it independently of motion.
 
     // ===== Touch: two-finger gestures (single-finger left alone for page scroll) =====
-    // Pan two fingers → rotate (yaw/pitch). Pinch in/out → move backward/forward.
+    // Pinch in/out → move backward/forward. Two-finger pan does nothing: the
+    // camera orientation is fixed, so there is no yaw/pitch to drive.
     let touchActive = false;
     let lastT1x = 0, lastT1y = 0, lastT2x = 0, lastT2y = 0, lastTDist = 0;
     function touchInPanel(e) {
@@ -1523,13 +1737,6 @@
       if (e.touches.length < 2) { touchActive = false; return; }
       const t1x = e.touches[0].clientX, t1y = e.touches[0].clientY;
       const t2x = e.touches[1].clientX, t2y = e.touches[1].clientY;
-      // Pan: average centroid movement → yaw/pitch
-      const avgDx = ((t1x + t2x) / 2) - ((lastT1x + lastT2x) / 2);
-      const avgDy = ((t1y + t2y) / 2) - ((lastT1y + lastT2y) / 2);
-      const sens = 0.0045;
-      yaw   += avgDx * sens;
-      pitch -= avgDy * sens;
-      pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
       // Pinch: distance change → forward/back thrust along camera forward
       const dist = Math.hypot(t1x - t2x, t1y - t2y);
       const pinchDelta = dist - lastTDist;
@@ -1547,11 +1754,8 @@
       if (e.touches.length < 2) touchActive = false;
     });
     document.addEventListener('touchcancel', () => { touchActive = false; });
-    // Suppress browser context menu — we use right-click for camera rotation
-    document.addEventListener('contextmenu', (e) => {
-      if (e.target && e.target.closest && e.target.closest('#coord-panel')) return;
-      e.preventDefault();
-    });
+    // The native context menu is left alone: right-click no longer drives
+    // camera rotation, so there is nothing to suppress it for.
 
     // ===== Visit nearest object of a given type =====
     function findNearest(type, searchRadius) {
@@ -1564,7 +1768,9 @@
           for (let dz = -searchRadius; dz <= searchRadius; dz++) {
             const objs = getChunk(ccx + dx, ccy + dy, ccz + dz);
             for (const obj of objs) {
-              if (obj.type !== type) continue;
+              // Scenery stars are not destinations — "visit star" should land
+              // on a real one with a generated surface, not a background dot.
+              if (obj.type !== type || obj.bg) continue;
               const ddx = obj.wx - cam[0];
               const ddy = obj.wy - cam[1];
               const ddz = obj.wz - cam[2];
@@ -1590,18 +1796,12 @@
       const ccx = Math.floor(cam[0] / CHUNK_SIZE);
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
       const ccz = Math.floor(cam[2] / CHUNK_SIZE);
-      // Reference direction: use velocity if we're moving, otherwise fall back
-      // to the camera's facing direction so the forwardness bias still applies
-      // even when we're stopped (e.g. picking the next POI during linger).
-      const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
-      let refX, refY, refZ, haveDir = true;
-      if (vMag > 1) {
-        refX = velocity[0] / vMag; refY = velocity[1] / vMag; refZ = velocity[2] / vMag;
-      } else {
-        const cp = Math.cos(pitch), sp = Math.sin(pitch);
-        const cy = Math.cos(yaw),   sy = Math.sin(yaw);
-        refX = sy * cp; refY = -sp; refZ = cy * cp;
-      }
+      // Reference direction is where the viewer is looking, which is now the
+      // same thing as where they are heading. Measuring the forward cone
+      // against viewDir (rather than raw velocity) keeps candidates inside the
+      // frame the viewer can actually see, including during linger when
+      // velocity has decayed toward zero and its direction is meaningless.
+      const refX = viewDir[0], refY = viewDir[1], refZ = viewDir[2], haveDir = true;
       // Score candidates by ANGLE primarily (minimal angle change wins),
       // distance secondary. Hard reject if angle > autoCfg.maxAngleChange.
       // First pass enforces the angle cap; only if nothing qualifies do we
@@ -1619,7 +1819,7 @@
               for (let dz = -radius; dz <= radius; dz++) {
                 const objs = getChunk(ccx + dx, ccy + dy, ccz + dz);
                 for (const obj of objs) {
-                  if (!AUTOPILOT_TYPES.includes(obj.type)) continue;
+                  if (obj.bg || !AUTOPILOT_TYPES.includes(obj.type)) continue;
                   const k = poiKey(obj);
                   if (autopilotVisited.includes(k)) continue;
                   const ddx = obj.wx - cam[0];
@@ -1652,16 +1852,13 @@
         }
         return null;
       }
-      // Primary pass: strict forward cone (autoCfg.maxAngleChange). Then
-      // widen to keep the autopilot from stalling (velocity → 0) when the
-      // strict cone has nothing unvisited — broaden to ±90°, then ±180°.
-      const strict = searchPass(autoCfg.maxAngleChange);
-      if (strict) return strict;
-      const wide = searchPass(Math.PI * 0.5);
-      if (wide) return wide;
-      const anywhere = searchPass(Math.PI);
-      if (anywhere) return anywhere;
-      return null;
+      // Strict forward cone ONLY. The old ±90°/±180° fallbacks would accept a
+      // target anywhere around the camera, including behind it; since the view
+      // now follows the heading, setting off for one would whip the whole sky
+      // through a half-turn. Returning null is the better failure mode — the
+      // caller leaves autopilotActive false and the camera keeps drifting
+      // straight ahead until something enters the cone.
+      return searchPass(autoCfg.maxAngleChange);
     }
     document.querySelectorAll('.coord-visit').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -1675,10 +1872,18 @@
           return;
         }
         const approach = target.physRadius * (APPROACH_MUL[type] || 10);
+        // Teleport to `approach` metres short of the body along -Z, then point
+        // the view down +Z so the body is dead-ahead on arrival. Without the
+        // reset the viewer would keep the heading they had before the jump and
+        // the target would sit off-frame.
         teleport(target.wx, target.wy, target.wz - approach);
-        // Reset orientation so the object is dead-ahead after teleport
-        yaw = 0; pitch = 0;
+        viewDir[0] = 0; viewDir[1] = 0; viewDir[2] = 1;
+        velocity[0] = 0; velocity[1] = 0; velocity[2] = 0;
         drifting = false;
+        // Kill the autopilot too — with it running, the very next frame
+        // acquires a new POI and warps away from the body the visitor just
+        // asked to see, so the visit lasted milliseconds.
+        if (autopilot) { autopilot = false; refreshAutopilotButton(); }
         if (btnPause) btnPause.textContent = '▶ Resume';
         btn.textContent = orig;
       });
@@ -1709,9 +1914,125 @@
               (Math.max(0, Math.min(255, nb | 0))));
     }
 
-    function drawStar(px, py, color, alpha, size) {
-      ctx.fillStyle = `rgba(${color},${alpha.toFixed(3)})`;
-      ctx.fillRect(px - size / 2, py - size / 2, size, size);
+    // ===== soft point-source sprite =====
+    // A star is a glowing point, not a lit square. The stop profile below
+    // reproduces the falloff measured off a real reference starfield —
+    // 1.00 → 0.22 → 0.11 → 0.06 → 0.03 → 0 across the sprite radius — which is
+    // a tight saturated core wrapped in a wide, very faint halo. That halo is
+    // what makes a dot read as "star" rather than "pixel".
+    //
+    // Sprites are built once per quantised colour and blitted, never generated
+    // per frame: at a few thousand stars a per-star createRadialGradient would
+    // dominate the frame budget, whereas drawImage is a straight blit.
+    const DOT_SPRITE_SIZE  = 32;   // sprite bitmap resolution
+    const DOT_GLOW_SCALE   = 3.5;    // halo diameter = size × this
+    const DOT_SPRITE_LIMIT = 128;  // cache cap, same eviction style as star textures
+    const STAR_HALO_ALPHA  = 0.13; // skirt brightness as a fraction of the core's
+    const STAR_HALO_MIN_A  = 0.35; // only genuinely bright stars get a skirt; each one costs a blit
+
+    // ===== distant-star look =====
+    // How far each star's spectral colour is pushed toward white. Real stars
+    // are near-colourless to the naked eye because they are too dim to engage
+    // cone vision; the reference field measures at saturation ≈0.07, which is
+    // what 0.9 lands on. Set to 1 for literally white, 0 for full spectral hue.
+    const STAR_WHITEN = 0.9;
+    // Exponent on the final alpha. >1 pushes the population dim so only a
+    // handful of stars are genuinely bright, matching the reference's strongly
+    // dim-skewed brightness histogram instead of an evenly-lit field.
+    const STAR_GAMMA = 1.35;
+    // Scintillation depth: alpha swings between (1 - this) and 1 of its value.
+    const STAR_TWINKLE = 0.55;
+    // Scintillation speed, radians/sec of wall-clock. Each star gets 0.6-1.6× of
+    // this from its hash, so at 0.22 the population breathes on ~24-48s cycles.
+    // Raise for busier sparkle, lower for a calmer sky.
+    const STAR_TWINKLE_HZ = 0.22;
+    // Floor on a star's drawn size, in CSS px. Below ~1px a star is sub-pixel:
+    // antialiasing spreads its alpha across neighbours and it washes out to
+    // nothing. The render volume holds thousands of distant stars that were
+    // being drawn at 0.6px and thus effectively not drawn at all, which is why
+    // open sky looked empty while clusters looked fine.
+    const STAR_MIN_PX = 1.0;
+    // How much brightness survives at maximum render distance. The old curve
+    // bottomed out at 0.25, which combined with the size floor above put far
+    // stars under the visibility threshold. Raising the floor is what fills the
+    // sky in — it does not add a single new object.
+    const STAR_DEPTH_FLOOR = 0.45;
+    const dotSpriteCache = new Map();
+    function getDotSprite(r, g, b) {
+      // Quantise to 16 levels/channel so Doppler-shifted variants of the same
+      // star share one sprite instead of thrashing the cache.
+      const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+      const hit = dotSpriteCache.get(key);
+      if (hit) return hit;
+      const S = DOT_SPRITE_SIZE, half = S / 2;
+      const cv = document.createElement('canvas');
+      cv.width = S; cv.height = S;
+      const sc = cv.getContext('2d');
+      const c = `${(r >> 4) * 17},${(g >> 4) * 17},${(b >> 4) * 17}`;
+      // This sprite is the HALO ONLY — the core is drawn separately in
+      // drawStar. So it wants a smooth, slowly-decaying skirt with no hard
+      // centre: a bright centre here would fight the core and re-create the
+      // blob. Overall skirt intensity is set by STAR_HALO_ALPHA at draw time.
+      const gr = sc.createRadialGradient(half, half, 0, half, half, half);
+      gr.addColorStop(0.00, `rgba(${c},1)`);
+      gr.addColorStop(0.30, `rgba(${c},0.75)`);
+      gr.addColorStop(0.55, `rgba(${c},0.35)`);
+      gr.addColorStop(0.78, `rgba(${c},0.12)`);
+      gr.addColorStop(1.00, `rgba(${c},0)`);
+      sc.fillStyle = gr;
+      sc.fillRect(0, 0, S, S);
+      if (dotSpriteCache.size >= DOT_SPRITE_LIMIT) {
+        dotSpriteCache.delete(dotSpriteCache.keys().next().value);
+      }
+      dotSpriteCache.set(key, cv);
+      return cv;
+    }
+
+    // Core and halo are drawn SEPARATELY rather than as one sprite. A single
+    // sprite couples them: making the core survive downscaling forces a wide
+    // bright blob, and tightening the blob dissolves the core. Split, each is
+    // controlled on its own — a crisp point carrying the star's real alpha,
+    // plus a much fainter wide skirt. That reproduces the reference profile,
+    // which is a saturated peak dropping to ~0.2 within a single pixel and
+    // then trailing off slowly.
+    // Style strings are cached, not rebuilt. Relativistic aberration folds the
+    // whole sky into the forward cone at cruise, so upward of 18,000 stars can
+    // be on screen at once; building an `rgba(...)` string per star per frame
+    // is ~18k allocations every 16ms. Colour is quantised to 4 bits/channel
+    // (whitening collapses stars to near-white anyway) and alpha to 64 steps,
+    // which is finer than the eye can track on a twinkling 1px dot.
+    const styleCache = new Map();
+    function starStyle(r, g, b, a) {
+      const q = ((r >> 4) << 14) | ((g >> 4) << 10) | ((b >> 4) << 6) | (a * 63) | 0;
+      let s = styleCache.get(q);
+      if (s === undefined) {
+        // Cheap guard against unbounded growth if colours ever spread out.
+        if (styleCache.size > 8192) styleCache.clear();
+        s = `rgba(${(r >> 4) * 17},${(g >> 4) * 17},${(b >> 4) * 17},${(((a * 63) | 0) / 63).toFixed(3)})`;
+        styleCache.set(q, s);
+      }
+      return s;
+    }
+
+    // Star dots go to the GL point-sprite layer when available; the 2d path
+    // below survives purely as the no-WebGL fallback.
+    function drawStar(px, py, r, g, b, alpha, size) {
+      const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+      if (starGL) { starGL.push(px, py, size, r, g, b, a); return; }
+      if (a > STAR_HALO_MIN_A) {
+        const d = size * DOT_GLOW_SCALE;
+        ctx.globalAlpha = a * STAR_HALO_ALPHA;
+        ctx.drawImage(getDotSprite(r, g, b), px - d / 2, py - d / 2, d, d);
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = starStyle(r, g, b, a);
+      if (size > 1.5) {
+        ctx.beginPath();
+        ctx.arc(px, py, size / 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillRect(px - size / 2, py - size / 2, size, size);
+      }
     }
 
     // ===== deterministic value noise + fBm =====
@@ -2134,22 +2455,56 @@
       if (!isLingerFrozen) tAnimAccum += dt * gravDilation * gammaTime;
       const tAnim = tAnimAccum;
 
-      // Camera basis vectors from yaw/pitch (right-handed; +Y is screen-down, +Z is forward).
-      // Let-bindings (not const) so autopilot snap can update them mid-frame
-      // when yaw/pitch are reset at a target handoff.
-      let cy = Math.cos(yaw),   sy = Math.sin(yaw);
-      let cp = Math.cos(pitch), sp = Math.sin(pitch);
-      let fx = sy * cp, fy = -sp,  fz = cy * cp;          // forward
-      let rx = cy,      ry = 0,    rz = -sy;              // right (horizontal)
+      // Point the view along the current heading. This uses the PREVIOUS
+      // frame's velocity — it is computed below — but a single frame of lag at
+      // 60fps is invisible and it keeps the basis available to everything that
+      // follows. Below ~1 m/s the heading is meaningless, so the last view
+      // direction is held rather than snapping to an arbitrary axis.
+      {
+        const vm = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+        if (vm > 1) {
+          const k = Math.min(1, dt * VIEW_TURN_RATE);
+          viewDir[0] += (velocity[0] / vm - viewDir[0]) * k;
+          viewDir[1] += (velocity[1] / vm - viewDir[1]) * k;
+          viewDir[2] += (velocity[2] / vm - viewDir[2]) * k;
+          const n = Math.sqrt(viewDir[0]*viewDir[0] + viewDir[1]*viewDir[1] + viewDir[2]*viewDir[2]) || 1;
+          viewDir[0] /= n; viewDir[1] /= n; viewDir[2] /= n;
+        }
+      }
+      yaw = Math.atan2(viewDir[0], viewDir[2]);
+      pitch = -Math.atan2(viewDir[1], Math.sqrt(viewDir[0]*viewDir[0] + viewDir[2]*viewDir[2]));
+
+      // Camera basis (right-handed; +Y is screen-down, forward is the heading).
+      const fx = viewDir[0], fy = viewDir[1], fz = viewDir[2];
+      // right = normalise(forward × worldUp), worldUp = (0,-1,0) because +Y
+      // points down the screen. The cross collapses to (fz, 0, -fx); it
+      // degenerates only when the heading is near-vertical, where any
+      // horizontal axis will do.
+      let rx = fz, rz = -fx;
+      const rn = Math.sqrt(rx * rx + rz * rz);
+      if (rn < 1e-6) { rx = 1; rz = 0; } else { rx /= rn; rz /= rn; }
+      const ry = 0;
       // up = right × forward
-      let ux = ry * fz - rz * fy;
-      let uy = rz * fx - rx * fz;
-      let uz = rx * fy - ry * fx;
+      const ux = ry * fz - rz * fy;
+      const uy = rz * fx - rx * fz;
+      const uz = rx * fy - ry * fx;
       // Compute the TARGET velocity for this frame (autopilot OR drift+manual).
       // The actual velocity is smoothed toward this target so acceleration ramps
       // over ~0.3s instead of stepping discontinuously.
       let tvx = 0, tvy = 0, tvz = 0;
-      const tAnimSec = nowMs / 1000;
+      // SIM clock, not wall clock. dt is capped at 0.1s/frame, so in a
+      // throttled or backgrounded tab sim time falls behind wall time. The
+      // autopilot's whole trip schedule (accel ramp, cruise, brake corridor,
+      // linger) is measured against this clock; when it ran on nowMs a
+      // throttled stretch let the wall-time bell curve expire with the camera
+      // only partway to the target, leaving it crawling at final-approach
+      // speed toward a body hours away — permanently, since nothing re-plans.
+      // Accumulating capped dt keeps the schedule and the physics on the same
+      // clock: a backgrounded tab simply pauses the trip instead of shredding
+      // it. Every consumer takes differences (or uses it as a periodic phase),
+      // so the changed epoch is invisible.
+      simClockSec += dt;
+      const tAnimSec = simClockSec;
       let autopilotActive = false;
       if (autopilot) {
         function computeFlyByOffset(target, outOffset) {
@@ -2183,24 +2538,17 @@
           const sdx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
           const sdy = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
           const sdz = (autopilotTarget.wz + autopilotOffset[2]) - cam[2];
-          yaw = Math.atan2(sdx, sdz);
-          pitch = -Math.atan2(sdy, Math.sqrt(sdx * sdx + sdz * sdz));
-          // Recompute basis vectors so this frame's tvx = fx * baseSpeed uses
-          // the NEW forward direction, not the stale pre-snap forward.
-          cy = Math.cos(yaw);   sy = Math.sin(yaw);
-          cp = Math.cos(pitch); sp = Math.sin(pitch);
-          fx = sy * cp; fy = -sp; fz = cy * cp;
-          rx = cy; ry = 0; rz = -sy;
-          ux = ry * fz - rz * fy;
-          uy = rz * fx - rx * fz;
-          uz = rx * fy - ry * fx;
-          // Snap velocity to align with the new forward too — otherwise the
-          // velocity vector lerps from the old direction over ~0.25s and the
-          // camera slides sideways while facing forward (reads as rotation).
+          // Aims the VELOCITY at the target; the view then follows it via the
+          // viewDir easing, which is what turns this into a visible banking
+          // turn rather than a cut. Without the snap the vector would lerp
+          // from the previous leg's heading and the camera would curve into
+          // the new target instead of setting off toward it cleanly.
+          const n = Math.sqrt(sdx * sdx + sdy * sdy + sdz * sdz);
+          if (n < 1) return;
           const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
-          velocity[0] = fx * vMag;
-          velocity[1] = fy * vMag;
-          velocity[2] = fz * vMag;
+          velocity[0] = sdx / n * vMag;
+          velocity[1] = sdy / n * vMag;
+          velocity[2] = sdz / n * vMag;
         }
         function acquireNewTarget() {
           autopilotTarget = findNextAutopilotPOI();
@@ -2262,9 +2610,9 @@
               // Redirect velocity to be PERPENDICULAR to the camera-to-body
               // vector so the linger drift carries the camera past the body
               // tangentially instead of straight through its center. This MUST
-              // happen AFTER snapAimToCurrentTarget — that function rotates
-              // velocity to align with the new forward direction (= toward
-              // target), which would undo the perpendicular projection.
+              // happen AFTER snapAimToCurrentTarget — that function points
+              // velocity straight at the target, which would undo the
+              // perpendicular projection.
               {
                 const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
                 if (vMag > 1 && pcDist > 1) {
@@ -2514,15 +2862,12 @@
               velocity[2] = tdz * smoothedMag;
               tvx = velocity[0]; tvy = velocity[1]; tvz = velocity[2];
             } else {
-              // Linger: arrival behaviour. Three knobs:
+              // Linger: arrival behaviour. Two knobs:
               //   arrivalHoldSec   — freeze in place for N sec after arrival
               //   arrivalDriftFrac — drift speed as fraction of designSpeed
-              //   arrivalLookAtBody — gently re-aim camera at the body during linger
               const sinceArrival = tAnimSec - autopilotLingerStart;
               const driftFrac = Math.max(0, Math.min(1, autoCfg.arrivalDriftFrac));
               const holdSec = Math.max(0, autoCfg.arrivalHoldSec || 0);
-              const lookFrac = Math.max(0, Math.min(1, autoCfg.arrivalLookAtBody || 0));
-              const settleRate = Math.max(0.1, autoCfg.arrivalSettleRate || 4);
               const curMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
               // passByVelC overrides the legacy designSpeed×driftFrac formula:
               // 0 = legacy, > 0 = absolute drift velocity in units of c.
@@ -2540,22 +2885,10 @@
                 velocity[1] = fy * targetMag;
                 velocity[2] = fz * targetMag;
               }
-              if (lookFrac > 0) {
-                const lDx = autopilotTarget.wx - cam[0];
-                const lDy = autopilotTarget.wy - cam[1];
-                const lDz = autopilotTarget.wz - cam[2];
-                const lN = Math.sqrt(lDx*lDx + lDy*lDy + lDz*lDz);
-                if (lN > 1) {
-                  const targYaw = Math.atan2(lDx, lDz);
-                  const targPitch = -Math.atan2(lDy, Math.sqrt(lDx*lDx + lDz*lDz));
-                  const k = Math.min(1, dt * settleRate * lookFrac);
-                  let dYaw = targYaw - yaw;
-                  while (dYaw >  Math.PI) dYaw -= 2 * Math.PI;
-                  while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
-                  yaw += dYaw * k;
-                  pitch += (targPitch - pitch) * k;
-                }
-              }
+              // No arrival look-at: nothing aims the view at the body it just
+              // reached. It sails past on the tangential linger vector and,
+              // because the view follows that vector, the body sweeps out of
+              // frame as the camera banks onto the new heading.
               tvx = velocity[0]; tvy = velocity[1]; tvz = velocity[2];
             }
           }
@@ -2604,6 +2937,45 @@
       velocity[0] += (tvx - velocity[0]) * lerpV;
       velocity[1] += (tvy - velocity[1]) * lerpV;
       velocity[2] += (tvz - velocity[2]) * lerpV;
+      // ===== velocity DIRECTION rate limiter =====
+      // The lerp above smooths magnitude but not direction: the autopilot's
+      // arrival redirect and handoff snap-aim rewrite velocity[] wholesale, so
+      // its direction used to teleport 30-90° in a single frame. Every
+      // relativistic visual — the aberration light-tunnel, Doppler tint,
+      // beaming — keys off velocity direction, as does the on-screen star
+      // flow, so each phase change cut the whole sky's shading to a new
+      // direction in one frame even though the geometric view eased. Capping
+      // how fast the direction can turn makes those cuts play out as sweeps:
+      // 90° arrival redirect ≈ 1.8s, ~33° handoff ≈ 0.7s. Magnitude is
+      // untouched — braking and warp ramps behave exactly as before.
+      {
+        const m = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+        if (m > 1 && lastVelDirMag > 1) {
+          const nx = velocity[0]/m, ny = velocity[1]/m, nz = velocity[2]/m;
+          const dot = Math.max(-1, Math.min(1, nx*lastVelDir[0] + ny*lastVelDir[1] + nz*lastVelDir[2]));
+          const ang = Math.acos(dot);
+          const maxStep = VEL_TURN_RATE * Math.PI/180 * dt;
+          if (ang > maxStep) {
+            // nlerp by the allowed fraction, then renormalise — accurate
+            // enough at per-frame step sizes and far cheaper than slerp.
+            const f = maxStep / ang;
+            let cx = lastVelDir[0] + (nx - lastVelDir[0]) * f;
+            let cy2 = lastVelDir[1] + (ny - lastVelDir[1]) * f;
+            let cz = lastVelDir[2] + (nz - lastVelDir[2]) * f;
+            const cn = Math.sqrt(cx*cx + cy2*cy2 + cz*cz) || 1;
+            cx /= cn; cy2 /= cn; cz /= cn;
+            velocity[0] = cx * m; velocity[1] = cy2 * m; velocity[2] = cz * m;
+            lastVelDir[0] = cx; lastVelDir[1] = cy2; lastVelDir[2] = cz;
+          } else {
+            lastVelDir[0] = nx; lastVelDir[1] = ny; lastVelDir[2] = nz;
+          }
+        } else if (m > 1) {
+          // Starting from rest (teleport, visit button): adopt the new
+          // direction immediately — there is no old heading to sweep from.
+          lastVelDir[0] = velocity[0]/m; lastVelDir[1] = velocity[1]/m; lastVelDir[2] = velocity[2]/m;
+        }
+        lastVelDirMag = m;
+      }
       // Apply smoothed velocity to camera position
       cam[0] += velocity[0] * dt;
       cam[1] += velocity[1] * dt;
@@ -2676,16 +3048,21 @@
         } else { window.__deepState.nearest = null; }
       }
       if (nowMs - lastSavedMs > 500) {
+        // localStorage and the on-screen readout are free to run often — they
+        // touch no browser history. The URL is on its own much slower clock.
         savePosition();
-        updateUrl();
         refreshUI();
         lastSavedMs = nowMs;
       }
+      maybeUpdateUrl(nowMs);
 
       ctx.clearRect(0, 0, W, H);
       const dark = isDark();
-      // soft tint in light mode so stars read
-      if (!dark) {
+      if (starGL) starGL.begin();
+      // soft tint in light mode so stars read. With the GL layer active the
+      // wash lives in its clear colour instead — painting it here would sit
+      // above the GL stars and mute them.
+      if (!dark && !starGL) {
         ctx.fillStyle = 'rgba(245,247,250,0.5)';
         ctx.fillRect(0, 0, W, H);
       }
@@ -2741,7 +3118,11 @@
               const oy = obj.wy - cam[1];
               const oz = obj.wz - cam[2];
               const d2 = ox * ox + oy * oy + oz * oz;
-              if (d2 < nearestThisFrame) {
+              // Scenery stars are excluded: this drives the proximity-based
+              // slowdown for manual flight, and background dots are dense
+              // enough that one is almost always the nearest object — which
+              // would throttle WASD to a crawl everywhere in open space.
+              if (!obj.bg && d2 < nearestThisFrame) {
                 nearestThisFrame = d2;
                 nearestRThisFrame = obj.physRadius || 1e6;
               }
@@ -2750,6 +3131,10 @@
                 nearestBHrs = obj.physRadius || 1e4;
               }
               if (d2 > renderD2) continue;
+              // Culled here rather than at draw time so distant scenery costs
+              // no projection or aberration work either. Light mode uses the
+              // much shorter radius — see BG_RENDER_FRAC_LIGHT.
+              if (obj.bg && d2 > (dark ? BG_RENDER_D2 : BG_RENDER_D2_LIGHT)) continue;
               // Relativistic aberration in the VELOCITY frame (not camera frame).
               // We rotate the source direction around the perpendicular plane to
               // velocity by the aberration angle, then project the aberrated
@@ -2916,8 +3301,14 @@
           } else {
             // Dot size scales with angRad up to the gradient threshold so the
             // transition isn't a visible jump from "small dot" to "blob".
-            const size = Math.max(0.6, Math.max(depth * 3.4 * obj.sizeMul, angRad * 2));
-            let a = obj.bri * (0.25 + depth * 0.75);
+            const size = Math.max(STAR_MIN_PX, Math.max(depth * 3.4 * obj.sizeMul, angRad * 2));
+            let a = Math.pow(obj.bri * (STAR_DEPTH_FLOOR + depth * (1 - STAR_DEPTH_FLOOR)), STAR_GAMMA);
+            if (obj.bg) {
+              // Ramp scenery in across the fade band so nothing pops as the
+              // camera crosses the scenery cull radius.
+              const f = (depth - BG_FADE_DEPTH) / BG_FADE_BAND;
+              a *= f < 0 ? 0 : f > 1 ? 1 : f;
+            }
             let cr = obj.cr, cg = obj.cg, cb = obj.cb;
             if (beta > 0.01) {
               const gamma = 1 / Math.sqrt(1 - beta * beta);
@@ -2934,13 +3325,35 @@
               const beam = Math.max(0.3, Math.min(16, D * D * D * D));
               a = Math.min(1, a * beam);
             }
+            // Desaturate toward white AFTER the Doppler shift. Cruise sits at
+            // β ≈ 0.9996, where the blueshift is strong enough to turn the
+            // whole sky cyan — whitening first would just get overwritten.
+            // Applying it last means STAR_WHITEN is a hard ceiling on
+            // saturation at any speed, while the surviving (1 - STAR_WHITEN)
+            // fraction still carries a hint of the shift.
+            cr = (cr + (255 - cr) * STAR_WHITEN) | 0;
+            cg = (cg + (255 - cg) * STAR_WHITEN) | 0;
+            cb = (cb + (255 - cb) * STAR_WHITEN) | 0;
+            // Scintillation. Phase and rate come from the object hash so a
+            // given star always twinkles identically at the same coordinate —
+            // the field stays deterministic across visitors and reloads.
+            {
+              const th = objHash(obj);
+              const twPhase = (th & 0xff) / 255 * Math.PI * 2;
+              const twRate  = STAR_TWINKLE_HZ * (0.6 + ((th >> 8) & 0xff) / 255);
+              // Wall-clock, NOT tAnim. tAnim is scaled by gammaTime, which at
+              // cruise reaches 1e8 — driving the phase from it made every star
+              // strobe. Scintillation is an atmospheric/observer effect and has
+              // no business being time-dilated by the camera's velocity.
+              a *= 1 - STAR_TWINKLE * (0.5 + 0.5 * Math.sin(tAnimSec * twRate + twPhase));
+            }
             if (dark) {
-              drawStar(proj.px, proj.py, `${cr},${cg},${cb}`, a, size);
+              drawStar(proj.px, proj.py, cr, cg, cb, a, size);
             } else {
               const rr = Math.min(60, Math.floor(255 - cr) * 0.3 | 0);
               const gg = Math.min(60, Math.floor(255 - cg) * 0.3 | 0);
               const bb = Math.min(60, Math.floor(255 - cb) * 0.3 | 0);
-              drawStar(proj.px, proj.py, `${rr},${gg},${bb}`, a * 0.6, size);
+              drawStar(proj.px, proj.py, rr, gg, bb, a * 0.6, size);
             }
           }
 
@@ -2950,7 +3363,7 @@
             // Dot sized at `rad * 2` matches the gradient-disc diameter at
             // the next LOD tier (rad=0.6) — no visible jump from dot to blob.
             const dotA = Math.max(0.25, 0.6 * depth);
-            drawStar(proj.px, proj.py, `${obj.cr},${obj.cg},${obj.cb}`, dotA, Math.max(0.7, rad * 2));
+            drawStar(proj.px, proj.py, obj.cr, obj.cg, obj.cb, dotA, Math.max(0.7, rad * 2));
           } else if (rad < 6) {
             const visAlpha = Math.min(1, 0.4 + depth);
             const grad = ctx.createRadialGradient(proj.px - rad * 0.35, proj.py - rad * 0.35, 0, proj.px, proj.py, rad);
@@ -3209,6 +3622,11 @@
           ctx.beginPath(); ctx.arc(proj.px, proj.py, rEH, 0, Math.PI * 2); ctx.fill();
         }
       }
+
+      // One upload + one draw call for every star dot batched this frame.
+      // Light mode drops the skirt entirely: a dark halo around a dark dot on
+      // a light page reads as smudge, not glow.
+      if (starGL) starGL.flush(dark, DOT_GLOW_SCALE, dark ? STAR_HALO_ALPHA : 0);
 
       lastNearestD = nearestThisFrame === Infinity ? Infinity : Math.sqrt(nearestThisFrame);
       lastNearestR = nearestRThisFrame;
