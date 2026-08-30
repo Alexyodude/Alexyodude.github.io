@@ -69,6 +69,10 @@
 <aside id="debug-plot-panel" class="hidden" aria-hidden="true">
   <div class="debug-title">WARP TIMELINE</div>
   <canvas id="debug-curve-canvas" width="320" height="120"></canvas>
+  <div class="debug-title" style="margin-top:6px">REALTIME · log|v| + events</div>
+  <!-- Sized from its container at runtime (the panel is resizable), not from
+       these attributes — they are only the pre-script fallback. -->
+  <canvas id="event-timeline-canvas" style="width:100%;height:150px;display:block"></canvas>
 </aside>
 
 <style>
@@ -224,7 +228,7 @@
     bottom: 16px;
     right: 296px;
     z-index: 30;
-    width: 340px;
+    width: 560px;
     min-width: 240px;
     height: auto;
     min-height: 160px;
@@ -404,24 +408,173 @@
       const STRIDE = 7; // px, py, size, r, g, b, a
       let data = new Float32Array(STRIDE * 20000);
       let n = 0;
-      gl.enableVertexAttribArray(loc.pos);
-      gl.enableVertexAttribArray(loc.size);
-      gl.enableVertexAttribArray(loc.color);
       const BYTES = STRIDE * 4;
-      gl.vertexAttribPointer(loc.pos, 2, gl.FLOAT, false, BYTES, 0);
-      gl.vertexAttribPointer(loc.size, 1, gl.FLOAT, false, BYTES, 8);
-      gl.vertexAttribPointer(loc.color, 4, gl.FLOAT, false, BYTES, 12);
+
+      // ===== star BODY impostor program =====
+      // A camera-facing quad shaded as a lit sphere: limb darkening, animated
+      // granulation, corona. Reads as a fully 3D star — rotates, has a limb,
+      // fills the screen smoothly on approach — without any mesh. Noise is
+      // cheap hash-fbm; decoration, not simulation.
+      const NOISE_GLSL = `
+        float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+        float vnoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          float a = hash21(i), b = hash21(i + vec2(1.0, 0.0));
+          float c = hash21(i + vec2(0.0, 1.0)), d = hash21(i + vec2(1.0, 1.0));
+          return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+        }
+        float fbm(vec2 p) {
+          float v = 0.0, amp = 0.55;
+          for (int i = 0; i < 3; i++) { v += amp * vnoise(p); p = p * 2.1 + 17.0; amp *= 0.5; }
+          return v;
+        }`;
+      const BVS = `
+        attribute vec2 a_corner;   // quad corner in sphere-radius units
+        attribute vec2 a_center;   // CSS px
+        attribute float a_rpx;     // sphere radius, CSS px
+        attribute vec4 a_col;      // base colour + seed in .a
+        uniform vec2 u_res;
+        varying vec2 v_q;
+        varying vec4 v_col;
+        void main() {
+          vec2 p = a_center + a_corner * a_rpx;
+          vec2 clip = (p / u_res) * 2.0 - 1.0;
+          gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+          v_q = a_corner;          // spans ±QUAD_R sphere radii
+          v_col = a_col;
+        }`;
+      const BFS = `
+        precision mediump float;
+        varying vec2 v_q;
+        varying vec4 v_col;
+        uniform float u_t;
+        ${NOISE_GLSL}
+        void main() {
+          float d = length(v_q);
+          float seed = v_col.a * 61.7;
+          vec3 base = v_col.rgb;
+          if (d < 1.0) {
+            // photosphere: fake 3D normal from the disc, granulation advected
+            // slowly, strong limb darkening
+            float nz = sqrt(1.0 - d * d);
+            vec2 sp = v_q * (1.0 + (1.0 - nz) * 0.6);   // crude sphere wrap
+            // AXIAL SPIN. Shifting the sample longitude (x) scrolls the
+            // surface pattern around the body, so the star visibly turns
+            // rather than just simmering in place. Divided by the sphere-wrap
+            // factor so the motion slows toward the limb the way a rotating
+            // sphere's surface does. Rate varies per star from its seed.
+            float spin = u_t * (0.05 + fract(v_col.a * 7.3) * 0.09);
+            sp.x += spin / (1.0 + (1.0 - nz) * 0.6);
+            float g1 = fbm(sp * 3.4 + seed + vec2(0.0, u_t * 0.012));
+            float g2 = fbm(sp * 9.0 - seed + vec2(0.0, u_t * 0.02));
+            // Exposure. The old gain was 1.5 against an already near-white
+            // base, so every pixel clipped at 1.0 and the disc rendered as a
+            // flat white field — measured: mean luminance 252 with a detail
+            // stdev of 1.7, i.e. no visible structure at all. That blown-out
+            // sheet is what reads as haze when the star fills the screen.
+            // Keeping the mean below clipping lets the granulation survive,
+            // and the contrast is widened to compensate for the lower gain.
+            float bright = 0.30 + 0.80 * g1 + 0.35 * g2 * g2;
+            float limb = pow(nz, 0.55);
+            vec3 col = base * bright * limb * 0.98;
+            // hot cells flash slightly white — only the top of the range, so
+            // they read as flecks rather than lifting the whole surface
+            col += vec3(0.16) * smoothstep(0.74, 0.96, g2) * limb;
+            gl_FragColor = vec4(col, 1.0);
+          } else {
+            // corona: exponential falloff with angular flicker
+            float ang = atan(v_q.y, v_q.x);
+            float fl = 0.7 + 0.3 * fbm(vec2(ang * 1.6 + seed, u_t * 0.1));
+            float c = exp(-(d - 1.0) * 2.1) * fl;
+            vec3 col = base * c * 0.95;
+            gl_FragColor = vec4(col * c, c);   // premultiplied
+          }
+        }`;
+      const bvs = sh(gl.VERTEX_SHADER, BVS), bfs = sh(gl.FRAGMENT_SHADER, BFS);
+      let bodyProg = null, bloc = null, bbuf = null;
+      if (bvs && bfs) {
+        bodyProg = gl.createProgram();
+        gl.attachShader(bodyProg, bvs); gl.attachShader(bodyProg, bfs); gl.linkProgram(bodyProg);
+        if (!gl.getProgramParameter(bodyProg, gl.LINK_STATUS)) { console.warn('starGL body link:', gl.getProgramInfoLog(bodyProg)); bodyProg = null; }
+        else {
+          bloc = {
+            corner: gl.getAttribLocation(bodyProg, 'a_corner'),
+            center: gl.getAttribLocation(bodyProg, 'a_center'),
+            rpx: gl.getAttribLocation(bodyProg, 'a_rpx'),
+            col: gl.getAttribLocation(bodyProg, 'a_col'),
+            res: gl.getUniformLocation(bodyProg, 'u_res'),
+            t: gl.getUniformLocation(bodyProg, 'u_t'),
+          };
+          bbuf = gl.createBuffer();
+        }
+      }
+      const QUAD_R = 2.6;             // quad half-size in sphere radii (room for corona)
+      const BSTRIDE = 9;              // corner.xy, center.xy, rpx, r, g, b, seed
+      let bdata = new Float32Array(BSTRIDE * 6 * 64);
+      let bn = 0;                     // vertices
+
+      // ===== star INTERIOR program =====
+      // Fullscreen emissive convection fog once the camera crosses into a
+      // star. Advected by camera position so flying through reads as motion;
+      // dimmer toward the core so the crossing has shape.
+      const IVS = `
+        attribute vec2 a_p;
+        varying vec2 v_uv;
+        void main() { v_uv = a_p * 0.5 + 0.5; gl_Position = vec4(a_p, 0.0, 1.0); }`;
+      const IFS = `
+        precision mediump float;
+        varying vec2 v_uv;
+        uniform vec2 u_res;
+        uniform float u_t;
+        uniform vec3 u_col;
+        uniform float u_depth;   // 0 at centre → 1 at surface
+        uniform float u_fade;    // 0..1 entry blend
+        uniform vec2 u_off;      // camera-position advection
+        ${NOISE_GLSL}
+        void main() {
+          vec2 n = (v_uv - 0.5) * vec2(u_res.x / u_res.y, 1.0);
+          float r = length(n);
+          float cells = fbm(n * 2.6 + u_off + vec2(u_t * 0.05, -u_t * 0.033));
+          float wisps = fbm(n * 7.0 - u_off * 1.7 + vec2(-u_t * 0.11, u_t * 0.07));
+          float bright = mix(0.82, 1.3, u_depth);          // slight dim toward core
+          vec3 col = u_col * (0.55 + 0.7 * cells + 0.3 * wisps * wisps) * bright;
+          col *= 1.0 - 0.35 * r;                            // soft radial shade
+          float a = u_fade;
+          gl_FragColor = vec4(col * a, a);                  // premultiplied
+        }`;
+      const ivs = sh(gl.VERTEX_SHADER, IVS), ifs = sh(gl.FRAGMENT_SHADER, IFS);
+      let intProg = null, iloc = null, ibuf = null;
+      if (ivs && ifs) {
+        intProg = gl.createProgram();
+        gl.attachShader(intProg, ivs); gl.attachShader(intProg, ifs); gl.linkProgram(intProg);
+        if (!gl.getProgramParameter(intProg, gl.LINK_STATUS)) { console.warn('starGL interior link:', gl.getProgramInfoLog(intProg)); intProg = null; }
+        else {
+          iloc = {
+            res: gl.getUniformLocation(intProg, 'u_res'),
+            t: gl.getUniformLocation(intProg, 'u_t'),
+            col: gl.getUniformLocation(intProg, 'u_col'),
+            depth: gl.getUniformLocation(intProg, 'u_depth'),
+            fade: gl.getUniformLocation(intProg, 'u_fade'),
+            off: gl.getUniformLocation(intProg, 'u_off'),
+          };
+          ibuf = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, ibuf);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+        }
+      }
+
+      let cssW = 0, cssH = 0, cssDpr = 1;
       return {
         resize(w, h, dprV) {
           glCanvas.width = w * dprV; glCanvas.height = h * dprV;
           glCanvas.style.width = w + 'px'; glCanvas.style.height = h + 'px';
           gl.viewport(0, 0, glCanvas.width, glCanvas.height);
-          gl.uniform2f(loc.res, w, h);
-          gl.uniform1f(loc.dpr, dprV);
+          cssW = w; cssH = h; cssDpr = dprV;
         },
-        begin() { n = 0; },
+        begin() { n = 0; bn = 0; },
         // dark mode: near-white points, additive — overlapping glows sum like
-        // light. light mode: dark points over the light page, normal blend.
+        // light — overlapping glows sum the way real light does.
         push(px, py, size, r, g, b, a) {
           const i = n * STRIDE;
           if (i + STRIDE > data.length) {
@@ -433,21 +586,86 @@
           n++;
         },
         flush(dark, glowScale, haloAlpha) {
-          // Light mode carries the page wash here (premultiplied) — it used to
-          // be painted on the 2d canvas, which now sits ABOVE this layer and
-          // would mute every star under it.
-          if (dark) gl.clearColor(0, 0, 0, 0);
-          else gl.clearColor(0.9608 * 0.5, 0.9686 * 0.5, 0.9804 * 0.5, 0.5);
+          gl.clearColor(0, 0, 0, 0);
           gl.clear(gl.COLOR_BUFFER_BIT);
           if (!n) return;
+          gl.useProgram(prog);
+          gl.uniform2f(loc.res, cssW, cssH);
+          gl.uniform1f(loc.dpr, cssDpr);
           gl.enable(gl.BLEND);
-          if (dark) gl.blendFunc(gl.ONE, gl.ONE);                    // additive
-          else gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);        // premult over
+          gl.blendFunc(gl.ONE, gl.ONE);   // additive
           gl.uniform1f(loc.glow, glowScale);
           gl.uniform1f(loc.haloA, haloAlpha);
+          gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+          gl.enableVertexAttribArray(loc.pos);
+          gl.enableVertexAttribArray(loc.size);
+          gl.enableVertexAttribArray(loc.color);
+          gl.vertexAttribPointer(loc.pos, 2, gl.FLOAT, false, BYTES, 0);
+          gl.vertexAttribPointer(loc.size, 1, gl.FLOAT, false, BYTES, 8);
+          gl.vertexAttribPointer(loc.color, 4, gl.FLOAT, false, BYTES, 12);
           gl.bufferData(gl.ARRAY_BUFFER, data.subarray(0, n * STRIDE), gl.DYNAMIC_DRAW);
           gl.drawArrays(gl.POINTS, 0, n);
         },
+        // Big star bodies as shaded sphere impostors. Pushed far→near by the
+        // caller (drawList is painter-sorted), drawn with premult-over blend
+        // so a near star occludes dots and stars behind it.
+        pushBody(px, py, rpx, r, g, b, seed) {
+          if (!bodyProg) return false;
+          const base = bn * BSTRIDE;
+          if (base + 6 * BSTRIDE > bdata.length) {
+            const grown = new Float32Array(bdata.length * 2);
+            grown.set(bdata); bdata = grown;
+          }
+          const cr = r / 255, cg = g / 255, cb = b / 255;
+          const corners = [-QUAD_R,-QUAD_R,  QUAD_R,-QUAD_R,  -QUAD_R,QUAD_R,  -QUAD_R,QUAD_R,  QUAD_R,-QUAD_R,  QUAD_R,QUAD_R];
+          for (let v = 0; v < 6; v++) {
+            const o = base + v * BSTRIDE;
+            bdata[o] = corners[v*2]; bdata[o+1] = corners[v*2+1];
+            bdata[o+2] = px; bdata[o+3] = py; bdata[o+4] = rpx;
+            bdata[o+5] = cr; bdata[o+6] = cg; bdata[o+7] = cb; bdata[o+8] = seed;
+          }
+          bn += 6;
+          return true;
+        },
+        flushBodies(t) {
+          if (!bodyProg || !bn) return;
+          gl.useProgram(bodyProg);
+          gl.uniform2f(bloc.res, cssW, cssH);
+          gl.uniform1f(bloc.t, t);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);   // opaque disc + soft corona
+          gl.bindBuffer(gl.ARRAY_BUFFER, bbuf);
+          const BB = BSTRIDE * 4;
+          gl.enableVertexAttribArray(bloc.corner);
+          gl.enableVertexAttribArray(bloc.center);
+          gl.enableVertexAttribArray(bloc.rpx);
+          gl.enableVertexAttribArray(bloc.col);
+          gl.vertexAttribPointer(bloc.corner, 2, gl.FLOAT, false, BB, 0);
+          gl.vertexAttribPointer(bloc.center, 2, gl.FLOAT, false, BB, 8);
+          gl.vertexAttribPointer(bloc.rpx, 1, gl.FLOAT, false, BB, 16);
+          gl.vertexAttribPointer(bloc.col, 4, gl.FLOAT, false, BB, 20);
+          gl.bufferData(gl.ARRAY_BUFFER, bdata.subarray(0, bn * BSTRIDE), gl.DYNAMIC_DRAW);
+          gl.drawArrays(gl.TRIANGLES, 0, bn);
+        },
+        // Fullscreen interior wash for a camera inside (or entering) a star.
+        interior(t, r, g, b, depthFrac, fade, offX, offY) {
+          if (!intProg) return;
+          gl.useProgram(intProg);
+          gl.uniform2f(iloc.res, cssW, cssH);
+          gl.uniform1f(iloc.t, t);
+          gl.uniform3f(iloc.col, r / 255, g / 255, b / 255);
+          gl.uniform1f(iloc.depth, depthFrac);
+          gl.uniform1f(iloc.fade, fade);
+          gl.uniform2f(iloc.off, offX, offY);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+          gl.bindBuffer(gl.ARRAY_BUFFER, ibuf);
+          const ap = gl.getAttribLocation(intProg, 'a_p');
+          gl.enableVertexAttribArray(ap);
+          gl.vertexAttribPointer(ap, 2, gl.FLOAT, false, 0, 0);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        },
+        hasBodies() { return !!bodyProg; },
         count() { return n; },
       };
     })();
@@ -475,17 +693,76 @@
     // sudden heading change (autopilot handing off to a new target) reads as a
     // turn rather than a cut.
     const viewDir = [0, 0, 1];
+    // Transit look-back: set at the core crossing of a star transit, cleared
+    // when the next trip begins. While set, the view eases toward the
+    // OPPOSITE of the travel direction — the 180° flip happens inside the
+    // star where the interior wash hides the sky, so the visitor emerges
+    // watching the star recede behind them instead of facing empty space.
+    let viewLookBack = false;
     // How fast the VELOCITY vector may turn, deg/sec (see the rate limiter at
-    // the integration site). The view then chases this at VIEW_TURN_RATE, so
+    // the integration site). The view then chases this via the angular slew
+    // below (VIEW_TURN_MAX_DPS et al), so
     // total transition feel = this sweep + the view's easing behind it.
     const VEL_TURN_RATE = 50;
+    // Transit tour: how many radii past the far surface before the handoff to
+    // the next target fires. Big enough that the star shrinks behind you
+    // before the view banks away.
+    const TRANSIT_EXIT_R = 8;
+    const TRANSIT_CROSS_S = 3.5;  // interior crossing ≈ 2×this seconds
+    const TRANSIT_RAMP_S = 3.0;   // approach/exit ramp gentleness (τ, seconds)
+    let autopilotTransitDone = false; // set once a transit has crossed and cleared the far side
+    // Upward speed slew cap, decades per second. 1.5 → a 3-decade climb
+    // (transit exit → warp) sweeps over ~2s instead of one frame.
+    const VEL_SLEW_DECADES_PER_S = 1.5;
+    let lastVelMag = 0;
+    // Anticipatory-brake horizon, seconds: cruise speed is always ≤
+    // (distance to approach threshold) / this. Smaller = later, harder brake.
+    const VEL_BRAKE_ANTICIPATION_S = 1.2;
+    // Realtime-timeline bookkeeping (see logEvent / drawEventTimeline).
+    let lastNoTargetLog = -Infinity;
+    let lastTransitDist = Infinity;
+    let lastTransitApproaching = true;
+    let autopilotBrakeLogged = false;
+    let lastKeyLog = -Infinity;
     const lastVelDir = [0, 0, 1];
     let lastVelDirMag = 0;
-    const VIEW_TURN_RATE = 0.9; // exponential easing rate; higher = snappier.
-    // 0.9 gives a ~1.1s time constant, so a full heading change plays out over
-    // ~3s — a slow cinematic bank. The cost of going low is lag: the view
-    // points slightly off-heading while a turn is in progress. Below ~0.5 the
-    // lag stops feeling like banking and starts feeling like drifting sideways.
+    // ===== view turn dynamics =====
+    // Not an exponential ease. Exponential decay is FASTEST at the start, so a
+    // big turn lurches away and then crawls — the opposite of how a real
+    // camera moves. This is an acceleration-limited angular slew instead:
+    // angular speed ramps up under an accel cap (ease-in), holds a ceiling,
+    // then eases out as the remaining angle shrinks. Small tracking
+    // corrections are unaffected — their desired speed is tiny from the start.
+    const VIEW_TURN_SETTLE_S = 1.1;   // arrival easing: desired ≈ angle / this
+    // Ease-in is LOGARITHMIC: the angular rate grows by a fixed proportion per
+    // second (doublings/s), not a fixed increment (deg/s²). Two reasons.
+    // Consistency — velocity already slews in decades/s and the transit brake
+    // is exponential in distance, so a linear ramp was the odd one out. And
+    // perception — apparent rate-of-change is proportional, so a constant
+    // fractional increase reads as uniform acceleration where a linear ramp
+    // reads as sluggish-then-sudden. Exponential growth cannot start from
+    // zero, hence the seed floor.
+    const VIEW_TURN_ACCEL_OCT_S = 2.6;  // doublings of angular rate per second
+    const VIEW_TURN_SEED_DPS = 1.5;     // growth floor, deg/s
+    // The hidden flip spools up faster — it has further to climb (75 vs 32
+    // deg/s ceiling) and no viewer, so a leisurely ramp would only lengthen
+    // the blind hover inside the star.
+    const VIEW_FLIP_ACCEL_OCT_S = 4.2;
+    // Speed multiplier when the view points away from travel (0 = full stop
+    // until aligned, 1 = no gating). Applies through the whole forward turn.
+    const VIEW_MISALIGN_SPEED_FLOOR = 0.12;
+    // How fast the speed cap decays toward arrival speed while the view is
+    // turning, in halvings per second. Higher = the ship sheds speed sooner
+    // so more of the turn happens at low β.
+    const VEL_TURN_SLOWDOWN_OCT_S = 1.6;
+    // Ceiling for the VISIBLE turn (look-back → forward at handoff). Low on
+    // purpose: this is the one the viewer actually watches, ~6s for 180°.
+    const VIEW_TURN_MAX_DPS = 17;
+    // Ceiling for the look-back flip. That one happens inside the star where
+    // the interior wash hides the sky, and the ship hovers until it finishes,
+    // so a slow flip would only stretch the hover with nothing to show.
+    const VIEW_FLIP_MAX_DPS = 75;
+    let viewAngVel = 0;               // current angular speed, rad/s
     // Derived from viewDir once per frame, purely so the debug panel and the
     // deep-state dump have something meaningful to report.
     let yaw = 0;
@@ -813,12 +1090,6 @@
     // (~4-6ms at ~25k stars). If a low-end machine struggles, lower these two
     // first.
     const BG_RENDER_FRAC = 1.0;
-    // Light mode keeps the old, much shorter scenery radius. Dark stars on a
-    // light page only ever worked as a sparse whisper — at full density the
-    // aberration-focused cluster renders as a black ink-blot behind the hero
-    // text. Light mode is about the page, not the universe.
-    const BG_RENDER_FRAC_LIGHT = 0.45;
-    const BG_RENDER_D2_LIGHT = (RENDER_DISTANCE * BG_RENDER_FRAC_LIGHT) * (RENDER_DISTANCE * BG_RENDER_FRAC_LIGHT);
     const BG_RENDER_D2 = (RENDER_DISTANCE * BG_RENDER_FRAC) * (RENDER_DISTANCE * BG_RENDER_FRAC);
     // `depth` is 1 at the camera and 0 at RENDER_DISTANCE, so the cull edge
     // sits at this depth. Scenery fades out across a band just inside it,
@@ -939,10 +1210,6 @@
     resize();
     window.addEventListener('resize', resize);
 
-    function isDark() {
-      return document.documentElement.getAttribute('data-theme') === 'dark';
-    }
-
     // ===== UI =====
     const elX = document.getElementById('coord-x');
     const elY = document.getElementById('coord-y');
@@ -1000,6 +1267,7 @@
 
     function teleport(x, y, z) {
       cam = [x, y, z];
+      logEvent('teleport', 'user');
       refreshUI();
       savePosition();
       updateUrl();
@@ -1037,6 +1305,7 @@
     if (btnPause) {
       btnPause.addEventListener('click', () => {
         drifting = !drifting;
+        logEvent(drifting ? 'resume drift' : 'pause', 'user');
         btnPause.textContent = drifting ? '⏸ Pause' : '▶ Resume';
       });
     }
@@ -1049,6 +1318,7 @@
     if (btnAutopilot) {
       btnAutopilot.addEventListener('click', () => {
         autopilot = !autopilot;
+        logEvent('autopilot ' + (autopilot ? 'ON' : 'OFF'), 'user');
         refreshAutopilotButton();
         if (autopilot) {
           autoW = false;
@@ -1639,6 +1909,110 @@
       });
     }
     const debugPlotPanel = document.getElementById('debug-plot-panel');
+
+    // ===== realtime event timeline =====
+    // A rolling strip-chart: per-frame |velocity| on a log axis with EVERY
+    // initiated action stamped the moment it fires — acquisitions, arrivals,
+    // brake entry, surface/core crossings, handoffs, teleports, user input.
+    // Instrumentation always records (it is a few array pushes); drawing only
+    // happens while the debug plot panel is open.
+    const evtCanvas = document.getElementById('event-timeline-canvas');
+    const evtCtx = evtCanvas ? evtCanvas.getContext('2d') : null;
+    const EVT_WINDOW = 75;           // seconds shown
+    const tourSamples = [];          // [tSec, |v|]
+    const tourEvents = [];           // { t, label, cls }
+    const EVT_COLORS = { nav: '#7be08a', phase: '#ffcc66', transit: '#ff8866', user: '#7fc4ff' };
+    function logEvent(label, cls) {
+      const t = performance.now() / 1000;
+      tourEvents.push({ t, label, cls: cls || 'phase' });
+      while (tourEvents.length > 400 || (tourEvents.length && tourEvents[0].t < t - EVT_WINDOW * 2)) tourEvents.shift();
+    }
+    // Exposed so external tooling can correlate events with telemetry.
+    window.__tourEvents = tourEvents;
+    function sampleTimeline(v) {
+      const t = performance.now() / 1000;
+      tourSamples.push([t, v]);
+      while (tourSamples.length && tourSamples[0][0] < t - EVT_WINDOW * 1.1) tourSamples.shift();
+    }
+    // Backing store follows the element's CSS box and the device pixel ratio,
+    // so the strip stays sharp and uses the full width when the panel is
+    // dragged wider. Fixed canvas attributes would just be stretched.
+    let evtW = 520, evtH = 150;
+    function sizeEvtCanvas() {
+      if (!evtCanvas || !evtCtx) return;
+      const dprL = Math.min(window.devicePixelRatio || 1, 2);
+      const cw = Math.max(240, Math.round(evtCanvas.clientWidth || 520));
+      const ch = Math.max(90, Math.round(evtCanvas.clientHeight || 150));
+      if (cw === evtW && ch === evtH && evtCanvas.width === Math.round(cw * dprL)) return;
+      evtW = cw; evtH = ch;
+      evtCanvas.width = Math.round(cw * dprL);
+      evtCanvas.height = Math.round(ch * dprL);
+      evtCtx.setTransform(dprL, 0, 0, dprL, 0, 0);
+    }
+    if (evtCanvas && typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => sizeEvtCanvas()).observe(evtCanvas);
+    }
+
+    function drawEventTimeline() {
+      if (!evtCtx || !tourSamples.length) return;
+      sizeEvtCanvas();
+      const W2 = evtW, H2 = evtH;
+      const now = performance.now() / 1000;
+      const tMin = now - EVT_WINDOW;
+      const LOGMIN = 6, LOGMAX = 13;         // 1e6 .. 1e13 m/s
+      const xOf = (t) => ((t - tMin) / EVT_WINDOW) * W2;
+      const yOf = (v) => {
+        const l = Math.log10(Math.max(1, v));
+        return H2 - 12 - ((Math.min(LOGMAX, Math.max(LOGMIN, l)) - LOGMIN) / (LOGMAX - LOGMIN)) * (H2 - 26);
+      };
+      evtCtx.clearRect(0, 0, W2, H2);
+      evtCtx.fillStyle = 'rgba(10,12,16,0.9)';
+      evtCtx.fillRect(0, 0, W2, H2);
+      // c reference line
+      evtCtx.strokeStyle = '#3a3f4a'; evtCtx.setLineDash([3, 3]);
+      evtCtx.beginPath(); evtCtx.moveTo(0, yOf(299792458)); evtCtx.lineTo(W2, yOf(299792458)); evtCtx.stroke();
+      evtCtx.setLineDash([]);
+      evtCtx.fillStyle = '#5a6070'; evtCtx.font = '8px monospace';
+      evtCtx.fillText('c', 3, yOf(299792458) - 2);
+      // velocity trace
+      evtCtx.strokeStyle = '#5bc8ff'; evtCtx.lineWidth = 1.2;
+      evtCtx.beginPath();
+      let started = false;
+      for (const [t, v] of tourSamples) {
+        const x = xOf(t);
+        if (x < 0) continue;
+        const y = yOf(v);
+        if (!started) { evtCtx.moveTo(x, y); started = true; } else evtCtx.lineTo(x, y);
+      }
+      evtCtx.stroke();
+      evtCtx.lineWidth = 1;
+      // events: tick + label. Collision-aware placement: each label takes the
+      // first of 6 rows whose right edge it clears, so clustered events stack
+      // vertically instead of overprinting each other.
+      const ROWS = 6;
+      const rowRight = new Array(ROWS).fill(-Infinity);
+      for (const e of tourEvents) {
+        if (e.t < tMin) continue;
+        const x = xOf(e.t);
+        const col = EVT_COLORS[e.cls] || '#aaa';
+        evtCtx.strokeStyle = col; evtCtx.globalAlpha = 0.55;
+        evtCtx.beginPath(); evtCtx.moveTo(x, 8); evtCtx.lineTo(x, H2 - 12); evtCtx.stroke();
+        evtCtx.globalAlpha = 1;
+        const label = e.label.slice(0, 26);
+        const w = evtCtx.measureText(label).width;
+        let r = 0;
+        while (r < ROWS - 1 && rowRight[r] > x - 3) r++;
+        const lx = Math.min(Math.max(x + 2, 1), W2 - w - 2);
+        rowRight[r] = lx + w + 6;
+        evtCtx.fillStyle = col;
+        evtCtx.fillText(label, lx, 15 + r * 9);
+      }
+      // time axis
+      evtCtx.fillStyle = '#5a6070';
+      evtCtx.fillText('-' + EVT_WINDOW + 's', 2, H2 - 3);
+      evtCtx.fillText('now', W2 - 22, H2 - 3);
+    }
+
     function setDebugOpen(open) {
       if (!debugPanel) return;
       debugPanel.classList.toggle('hidden', !open);
@@ -1703,6 +2077,10 @@
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
       if (k === 'w') autoW = false; // user takes over the virtual auto-press
       keys.add(k);
+      if (['w','a','s','d','q','e'].includes(k) && tAnimAccum - lastKeyLog > 1.5) {
+        lastKeyLog = tAnimAccum;
+        logEvent('manual key: ' + k.toUpperCase(), 'user');
+      }
       if (k === ' ' || (['w','a','s','d','q','e'].includes(k))) e.preventDefault();
     }, { passive: false });
     window.addEventListener('keyup', (e) => {
@@ -1796,12 +2174,17 @@
       const ccx = Math.floor(cam[0] / CHUNK_SIZE);
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
       const ccz = Math.floor(cam[2] / CHUNK_SIZE);
-      // Reference direction is where the viewer is looking, which is now the
-      // same thing as where they are heading. Measuring the forward cone
-      // against viewDir (rather than raw velocity) keeps candidates inside the
-      // frame the viewer can actually see, including during linger when
-      // velocity has decayed toward zero and its direction is meaningless.
-      const refX = viewDir[0], refY = viewDir[1], refZ = viewDir[2], haveDir = true;
+      // Reference direction for the forward cone is TRAVEL, not gaze. The two
+      // normally agree (the view follows the heading), but they diverge for
+      // seconds at a time — during the transit look-back, and throughout the
+      // slow turn back to forward. Searching along a lagging gaze would pick
+      // targets behind the ship. Gaze is only the fallback when stopped, where
+      // velocity has no meaningful direction.
+      const vm2 = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+      const refX = vm2 > 1 ? velocity[0]/vm2 : viewDir[0];
+      const refY = vm2 > 1 ? velocity[1]/vm2 : viewDir[1];
+      const refZ = vm2 > 1 ? velocity[2]/vm2 : viewDir[2];
+      const haveDir = true;
       // Score candidates by ANGLE primarily (minimal angle change wins),
       // distance secondary. Hard reject if angle > autoCfg.maxAngleChange.
       // First pass enforces the angle cap; only if nothing qualifies do we
@@ -1884,6 +2267,8 @@
         // acquires a new POI and warps away from the body the visitor just
         // asked to see, so the visit lasted milliseconds.
         if (autopilot) { autopilot = false; refreshAutopilotButton(); }
+        viewLookBack = false;
+        logEvent('visit ' + type, 'user');
         if (btnPause) btnPause.textContent = '▶ Resume';
         btn.textContent = orig;
       });
@@ -2016,6 +2401,129 @@
 
     // Star dots go to the GL point-sprite layer when available; the 2d path
     // below survives purely as the no-WebGL fallback.
+    // Draws one arc of a planet's ring system. Called twice per planet — far
+    // half before the body, near half after — so the sphere occludes the ring
+    // where it passes behind. `a0`/`a1` select the arc in canvas ellipse
+    // parameter space (π..2π = far/top, 0..π = near/bottom).
+    //
+    // The tilt is derived from the object hash instead of the old fixed 0.4
+    // rad: every ringed planet used to sit at exactly the same angle, which
+    // read as a decal. Sign varies too, so some rings lean the other way.
+    const RING_INNER = 1.24, RING_OUTER = 2.08;   // in planet radii
+    // Radial opacity profile across the ring plane, t = 0 at the inner edge.
+    // Real ring systems are not uniform bands — they are a near-continuous
+    // sheet cut by resonance gaps, faint on the inside, tapering outside. The
+    // gaussian notches are the gaps (the wide one at t≈0.47 stands in for the
+    // Cassini division); the sine term is fine ringlet structure.
+    function ringDensity(t) {
+      let d = 1;
+      d *= 1 - 0.94 * Math.exp(-Math.pow((t - 0.47) / 0.050, 2));  // major division
+      d *= 1 - 0.55 * Math.exp(-Math.pow((t - 0.79) / 0.028, 2));  // narrow outer gap
+      d *= 1 - 0.40 * Math.exp(-Math.pow((t - 0.14) / 0.045, 2));  // inner gap
+      d *= 0.80 + 0.20 * Math.sin(t * 47.0);                       // ringlets
+      d *= 0.35 + 0.65 * Math.min(1, t / 0.16);                    // faint inner (C-ring)
+      d *= 1 - 0.55 * Math.max(0, (t - 0.86) / 0.14);              // outer taper
+      return d < 0 ? 0 : d > 1 ? 1 : d;
+    }
+    // One half of a planet's ring system. Drawn as many thin concentric arcs
+    // sampled from ringDensity rather than a few thick strokes, which is what
+    // gives the sheet its gaps and grain. `half` is 'far' (behind the body,
+    // painted first) or 'near' (in front, painted last).
+    function drawPlanetRing(obj, proj, rad, depth, half) {
+      const rr = mulberry32(objHash(obj) ^ 0x1234);
+      const tilt = (rr() - 0.5) * 1.5;
+      // Ring plane openness. Near zero the ring is edge-on — correct, and it
+      // renders as a thin bright line the way a real one does.
+      const openness = 0.10 + Math.abs(Math.sin(tilt)) * 0.52;
+      // Icy, not the planet's own colour — the old version tinted rings with
+      // the body hue, which is the main reason they read as painted-on. Real
+      // ring particles are water ice and rock: pale grey through warm tan.
+      const warm = rr();
+      const ir = 196 + warm * 40, ig = 188 + warm * 26, ib = 176 + warm * 4;
+      const far = half === 'far';
+      const a0 = far ? Math.PI : 0, a1 = far ? Math.PI * 2 : Math.PI;
+      // Far arc reads slightly dimmer: seen across the ring plane and partly
+      // veiled by the near sheet.
+      const ringA = Math.min(0.78, 0.42 + depth * 0.5) * (far ? 0.82 : 1);
+      const bands = rad > 70 ? 52 : rad > 26 ? 32 : rad > 8 ? 18 : 8;
+      const step = rad * (RING_OUTER - RING_INNER) / bands;
+
+      // Light direction. Same seed as the day/night terminator below, so the
+      // shadows agree with the lit hemisphere instead of contradicting it —
+      // the previous version offset the ring shadow straight down regardless
+      // of where the light was coming from.
+      const lightPhase = mulberry32(objHash(obj) + 0xab)() * Math.PI * 2;
+      const lx = Math.cos(lightPhase), ly = Math.sin(lightPhase);
+
+      // Ring's shadow cast ONTO the planet — near pass only, where the body is
+      // already painted. Displaced along the ANTI-light direction so it falls
+      // on the lit face, which is the only place a shadow can be seen.
+      if (!far && rad > 14) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(proj.px, proj.py, rad * 0.995, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.lineWidth = step * 1.6;
+        const ox = -lx * rad * 0.10, oy = -ly * rad * 0.10;
+        for (let i = 0; i < bands; i++) {
+          const t = (i + 0.5) / bands;
+          const dens = ringDensity(t);
+          if (dens < 0.05) continue;
+          const rx = rad * (RING_INNER + (RING_OUTER - RING_INNER) * t);
+          ctx.strokeStyle = `rgba(0,0,0,${(0.5 * dens).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.ellipse(proj.px + ox, proj.py + oy, rx, rx * openness, tilt, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      ctx.lineWidth = step * 1.15;   // slight overlap so bands abut seamlessly
+      for (let i = 0; i < bands; i++) {
+        const t = (i + 0.5) / bands;
+        const dens = ringDensity(t);
+        if (dens < 0.03) continue;
+        const rx = rad * (RING_INNER + (RING_OUTER - RING_INNER) * t);
+        const a = ringA * dens;
+        ctx.strokeStyle = `rgba(${ir | 0},${ig | 0},${ib | 0},${a.toFixed(3)})`;
+        ctx.beginPath();
+        ctx.ellipse(proj.px, proj.py, rx, rx * openness, tilt, a0, a1);
+        ctx.stroke();
+      }
+
+      // Planet's shadow falling ACROSS the rings. This is the one that was
+      // wrong twice over: it clipped to the planet's own disc, so the body —
+      // painted immediately afterwards — covered all but a 4% sliver of it,
+      // and a planet's shadow does not sit on its silhouette anyway. It is a
+      // wedge thrown OUTWARD along the anti-light direction, the dark band
+      // you see cutting across Saturn's rings. Clipping to that half-strip
+      // (width = the planet's diameter, extending away from the light) puts
+      // it where it belongs, and applying it to both halves means the near
+      // arc gets shadowed too.
+      if (rad > 14) {
+        const theta = lightPhase + Math.PI;   // point +x down the anti-light axis
+        ctx.save();
+        ctx.translate(proj.px, proj.py);
+        ctx.rotate(theta);
+        ctx.beginPath();
+        ctx.rect(0, -rad, rad * RING_OUTER * 1.3, rad * 2);
+        ctx.clip();
+        ctx.lineWidth = step * 1.3;
+        for (let i = 0; i < bands; i++) {
+          const t = (i + 0.5) / bands;
+          const dens = ringDensity(t);
+          if (dens < 0.05) continue;
+          const rx = rad * (RING_INNER + (RING_OUTER - RING_INNER) * t);
+          ctx.strokeStyle = `rgba(0,0,0,${(0.62 * dens).toFixed(3)})`;
+          ctx.beginPath();
+          // Frame is rotated by theta, so cancel it out of the ellipse tilt.
+          ctx.ellipse(0, 0, rx, rx * openness, tilt - theta, a0, a1);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
     function drawStar(px, py, r, g, b, alpha, size) {
       const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
       if (starGL) { starGL.push(px, py, size, r, g, b, a); return; }
@@ -2463,12 +2971,60 @@
       {
         const vm = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
         if (vm > 1) {
-          const k = Math.min(1, dt * VIEW_TURN_RATE);
-          viewDir[0] += (velocity[0] / vm - viewDir[0]) * k;
-          viewDir[1] += (velocity[1] / vm - viewDir[1]) * k;
-          viewDir[2] += (velocity[2] / vm - viewDir[2]) * k;
-          const n = Math.sqrt(viewDir[0]*viewDir[0] + viewDir[1]*viewDir[1] + viewDir[2]*viewDir[2]) || 1;
-          viewDir[0] /= n; viewDir[1] /= n; viewDir[2] /= n;
+          const sgn = viewLookBack ? -1 : 1;
+          let tx2 = sgn * velocity[0] / vm, ty2 = sgn * velocity[1] / vm, tz2 = sgn * velocity[2] / vm;
+          // Antipodal degeneracy: easing a vector toward its exact opposite
+          // collapses through zero and stalls. When nearly opposed, tilt the
+          // target sideways so the turn commits to a rotation plane.
+          const dtv = viewDir[0]*tx2 + viewDir[1]*ty2 + viewDir[2]*tz2;
+          if (dtv < -0.985) {
+            let px2 = viewDir[2], py2 = 0, pz2 = -viewDir[0];   // viewDir × worldY
+            const pn2 = Math.sqrt(px2*px2 + pz2*pz2);
+            if (pn2 < 1e-6) { px2 = 1; pz2 = 0; } else { px2 /= pn2; pz2 /= pn2; }
+            tx2 += px2 * 0.25; ty2 += py2 * 0.25; tz2 += pz2 * 0.25;
+            const tn2 = Math.sqrt(tx2*tx2 + ty2*ty2 + tz2*tz2) || 1;
+            tx2 /= tn2; ty2 /= tn2; tz2 /= tn2;
+          }
+          // Acceleration-limited slew toward the target direction.
+          const cosA = Math.max(-1, Math.min(1, viewDir[0]*tx2 + viewDir[1]*ty2 + viewDir[2]*tz2));
+          const ang = Math.acos(cosA);
+          if (ang > 1e-5) {
+            const maxRate = (viewLookBack ? VIEW_FLIP_MAX_DPS : VIEW_TURN_MAX_DPS) * Math.PI / 180;
+            // Desired speed arrives in VIEW_TURN_SETTLE_S — shrinking with the
+            // remaining angle, which is the ease-OUT — capped by maxRate. That
+            // side was already exponential (rate ∝ remaining angle); this
+            // makes the ease-IN match, so the profile is symmetric in log
+            // space: a straight line up and down on a log-rate plot.
+            const desired = Math.min(maxRate, ang / VIEW_TURN_SETTLE_S);
+            const seed = VIEW_TURN_SEED_DPS * Math.PI / 180;
+            const growth = Math.pow(2, (viewLookBack ? VIEW_FLIP_ACCEL_OCT_S : VIEW_TURN_ACCEL_OCT_S) * dt);
+            if (viewAngVel < desired) viewAngVel = Math.min(desired, Math.max(seed, viewAngVel) * growth);
+            else viewAngVel = Math.max(desired, viewAngVel / growth);
+            const step = Math.min(ang, viewAngVel * dt);
+            // Rotate about the axis by exactly `step` (Rodrigues, simplified
+            // since the axis is perpendicular to viewDir). NOT nlerp: lerping
+            // by fraction step/ang under-rotates badly as the angle
+            // approaches 180°, which made the look-back flip crawl for its
+            // first three seconds no matter what rate was commanded.
+            let ax = viewDir[1]*tz2 - viewDir[2]*ty2;
+            let ay = viewDir[2]*tx2 - viewDir[0]*tz2;
+            let az = viewDir[0]*ty2 - viewDir[1]*tx2;
+            const an = Math.sqrt(ax*ax + ay*ay + az*az);
+            if (an > 1e-9) {
+              ax /= an; ay /= an; az /= an;
+              const cs = Math.cos(step), sn = Math.sin(step);
+              const cx = ay*viewDir[2] - az*viewDir[1];
+              const cy2 = az*viewDir[0] - ax*viewDir[2];
+              const cz2 = ax*viewDir[1] - ay*viewDir[0];
+              viewDir[0] = viewDir[0]*cs + cx*sn;
+              viewDir[1] = viewDir[1]*cs + cy2*sn;
+              viewDir[2] = viewDir[2]*cs + cz2*sn;
+              const n = Math.sqrt(viewDir[0]*viewDir[0] + viewDir[1]*viewDir[1] + viewDir[2]*viewDir[2]) || 1;
+              viewDir[0] /= n; viewDir[1] /= n; viewDir[2] /= n;
+            }
+          } else {
+            viewAngVel = 0;
+          }
         }
       }
       yaw = Math.atan2(viewDir[0], viewDir[2]);
@@ -2564,7 +3120,14 @@
             const hi = Math.max(lo, autoCfg.tripTimeMax || 10);
             autopilotTripTargetSec = lo + Math.random() * (hi - lo);
           }
-          if (!autopilotTarget) return;
+          if (!autopilotTarget) {
+            // Throttled: acquire runs every frame while empty-handed.
+            if (tAnimSec - lastNoTargetLog > 5) { logEvent('no target — drifting', 'nav'); lastNoTargetLog = tAnimSec; }
+            return;
+          }
+          logEvent('acquire ' + autopilotTarget.type, 'nav');
+          autopilotBrakeLogged = false;
+          if (viewLookBack) { viewLookBack = false; logEvent('view: forward', 'user'); }
           computeFlyByOffset(autopilotTarget, autopilotOffset);
           const _adx = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
           const _ady = (autopilotTarget.wy + autopilotOffset[1]) - cam[1];
@@ -2576,7 +3139,10 @@
         function prepareNextTarget() {
           if (nextAutopilotTarget) return;
           nextAutopilotTarget = findNextAutopilotPOI();
-          if (nextAutopilotTarget) computeFlyByOffset(nextAutopilotTarget, nextAutopilotOffset);
+          if (nextAutopilotTarget) {
+            logEvent('next queued: ' + nextAutopilotTarget.type, 'nav');
+            computeFlyByOffset(nextAutopilotTarget, nextAutopilotOffset);
+          }
         }
         if (autopilotForceRefresh) {
           // Debug "Next POI" button — drop the current target so the picker
@@ -2604,16 +3170,16 @@
             if (autopilotPhase === 'traveling' && pcDist < pCloseThreshold) {
               autopilotPhase = 'lingering';
               autopilotLingerStart = tAnimSec;
+              autopilotTransitDone = false;
+              lastTransitDist = Infinity;
+              logEvent('arrive ' + autopilotTarget.type + ' @' + (pcDist / pRadius).toFixed(1) + 'R', 'phase');
               // Hold off on prepareNextTarget — let the camera warp for
               // preSearchDelaySec first (see linger branch below).
               snapAimToCurrentTarget();
-              // Redirect velocity to be PERPENDICULAR to the camera-to-body
-              // vector so the linger drift carries the camera past the body
-              // tangentially instead of straight through its center. This MUST
-              // happen AFTER snapAimToCurrentTarget — that function points
-              // velocity straight at the target, which would undo the
-              // perpendicular projection.
-              {
+              // TRANSIT bodies (stars) fly straight THROUGH the centre — no
+              // tangential dodge. snapAim just pointed velocity at the body;
+              // for a transit that is exactly right, so leave it alone.
+              if (autopilotTarget.type !== 'star') {
                 const vMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
                 if (vMag > 1 && pcDist > 1) {
                   const ux = pcdx / pcDist, uy = pcdy / pcDist, uz = pcdz / pcDist;
@@ -2644,8 +3210,17 @@
               const sinceLinger = tAnimSec - autopilotLingerStart;
               if (sinceLinger >= Math.max(0, autoCfg.preSearchDelaySec || 0)) prepareNextTarget();
             }
-            if (autopilotPhase === 'lingering' && (tAnimSec - autopilotLingerStart) > autoCfg.linger) {
+            // Transit targets ignore the linger timer: the trip through the
+            // star takes as long as it takes (speed is distance-shaped), and
+            // handing off mid-approach was exactly the old one-frame-of-body
+            // bug in new clothes. autopilotTransitDone is set on the far side.
+            const lingerElapsed = (tAnimSec - autopilotLingerStart) > autoCfg.linger;
+            const mayHandOff = autopilotTarget.type === 'star' ? autopilotTransitDone : lingerElapsed;
+            if (autopilotPhase === 'lingering' && mayHandOff) {
+              logEvent('handoff', 'nav');
               if (nextAutopilotTarget) {
+                autopilotBrakeLogged = false;
+                if (viewLookBack) { viewLookBack = false; logEvent('view: forward', 'user'); }
                 autopilotTarget = nextAutopilotTarget;
                 autopilotOffset[0] = nextAutopilotOffset[0];
                 autopilotOffset[1] = nextAutopilotOffset[1];
@@ -2721,6 +3296,11 @@
             const designSpeed = closeThreshold / (autoCfg.linger * autoCfg.designSpeedDivisor);
 
             if (autopilotPhase === 'traveling') {
+              // Timeline stamp: first frame inside the brake corridor.
+              if (!autopilotBrakeLogged && dist < closeThreshold * autoCfg.decelCorridorMul) {
+                autopilotBrakeLogged = true;
+                logEvent('brake corridor', 'phase');
+              }
               // Direct-to-target velocity vector — always points exactly at
               // the POI so we never drift sideways. Magnitude logic:
               //   - When |v| < baseSpeed (accelerating): smooth ramp at
@@ -2853,7 +3433,71 @@
                 const fU = Math.max(0, Math.min(1, (tAnimSec - autopilotFinalStart) / finalT));
                 curveVel = autopilotFinalEntryVel + (designSpeed - autopilotFinalEntryVel) * fU;
               }
-              const baseSpeed = Math.min(curveVel, safetyCap);
+              // Anticipatory brake: never be moving faster than "reach the
+              // approach threshold in ~1.2s". Without this, warp speeds cover
+              // the whole remaining trip in under one frame and the per-frame
+              // safetyCap slams velocity down 5-7 decades instantly — the
+              // vertical cliffs on the realtime strip. This cap engages EARLY
+              // and shrinks with distance, so the same braking happens as a
+              // smooth ~0.3 decades/s log-linear descent instead of a wall.
+              const brakeCap = designSpeed + Math.max(0, dist - closeThreshold) / VEL_BRAKE_ANTICIPATION_S;
+              // The bell curve is TIME-scheduled; the brake cap is DISTANCE-
+              // shaped. When braking makes the trip run longer than planned,
+              // the time-curve expires mid-flight and collapses to
+              // designSpeed while the ship is still astronomically far — a
+              // permanent crawl (observed: 16 years to target). When the plan
+              // has exhausted itself (curveVel at its floor) but we are not
+              // actually close, ride the distance profile home instead: it
+              // converges on the threshold with a ~1.2s time constant,
+              // log-linearly, no cliff.
+              // No distance guard: the profile equals designSpeed AT the
+              // threshold, so riding it is correct at every range. (A 2×thr
+              // guard here created a dead zone where the ship crawled at 30R.)
+              const planExhausted = curveVel <= designSpeed * 1.05;
+              let baseSpeed = planExhausted
+                ? Math.min(safetyCap, brakeCap)
+                : Math.min(curveVel, safetyCap, brakeCap);
+              // Don't accelerate while the camera isn't looking where we are
+              // going. After a transit the view is still swung round at the
+              // star behind; without this the ship is already climbing toward
+              // warp during the whole forward turn, so the departure happens
+              // off-screen and the turn ends on a view that is already racing.
+              // Speed is held to a fraction until the gaze catches up, then
+              // released — the log slew limiter smooths the hand-back.
+              {
+                const dn2 = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
+                const align = (viewDir[0]*dx + viewDir[1]*dy + viewDir[2]*dz) / dn2;
+                // Release only when the gaze is genuinely on target. The old
+                // mapping hit f=1 at align≈0.9 — about 25° out — and with the
+                // slower turn those last degrees take seconds, during which
+                // the gate was already fully open and the warp curve climbed
+                // back to thousands of c mid-turn. Requiring ~0.995 (≈6°)
+                // keeps the ship slow until the sky has stopped swinging.
+                const f = Math.max(0, Math.min(1, (align - 0.90) / 0.095));
+                // Geometric hold, NOT a multiplier. The warp curve grows
+                // exponentially, so scaling it by a fraction still leaves it
+                // exponential — measured 43 million c mid-turn at a 0.12
+                // multiplier. Interpolating in LOG space between the current
+                // speed and the commanded one pins the ceiling to what we are
+                // already doing until the gaze catches up, then hands back
+                // smoothly (f=0 → hold, f=1 → full command).
+                // The cap doesn't just HOLD speed during the turn, it decays
+                // toward the arrival speed, so the ship actively slows while
+                // it comes about. That matters visually as much as
+                // mechanically: at high β relativistic aberration crushes the
+                // starfield into a bright knot around the direction of
+                // travel, so turning at speed swings that knot across frame
+                // and the stars read as clumped somewhere arbitrary. Slow to
+                // low β first and the sky is near-uniform, so the turn shows
+                // an even field rotating rather than a blob sliding.
+                // Decaying from lastVelMag (not snapping to designSpeed)
+                // keeps the slowdown itself smooth.
+                const decay = Math.pow(2, -VEL_TURN_SLOWDOWN_OCT_S * dt);
+                const cap = Math.max(designSpeed, lastVelMag * decay);
+                if (f < 1 && baseSpeed > cap) {
+                  baseSpeed = cap * Math.pow(baseSpeed / cap, f);
+                }
+              }
               const dn = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
               const tdx = dx / dn, tdy = dy / dn, tdz = dz / dn;
               const smoothedMag = baseSpeed;
@@ -2862,6 +3506,74 @@
               velocity[2] = tdz * smoothedMag;
               tvx = velocity[0]; tvy = velocity[1]; tvz = velocity[2];
             } else {
+              const isTransit = autopilotTarget.type === 'star';
+              if (isTransit) {
+                // ===== fly-THROUGH transit (stars) =====
+                // Velocity stays aimed straight through the centre (snapAim
+                // set it at arrival and nothing here bends it). Speed is a
+                // pure function of distance-to-surface, symmetric about the
+                // star: exponential brake on the way in (τ≈2s), a slow
+                // interior crossing, the mirrored ramp back out. The body is
+                // dead-centre the entire time because the view IS the
+                // velocity. Exit: once receding past TRANSIT_EXIT_R radii the
+                // linger timer is force-expired so the normal handoff runs.
+                const R = targetRadius;
+                const surf = Math.max(0, centreDist - R);
+                const approaching = (cdx * velocity[0] + cdy * velocity[1] + cdz * velocity[2]) > 0;
+                // Timeline stamps for the crossing milestones.
+                if (lastTransitDist > R && centreDist <= R) logEvent('ENTER star surface', 'transit');
+                if (lastTransitDist <= R && centreDist > R) logEvent('EXIT star surface', 'transit');
+                if (lastTransitApproaching && !approaching) {
+                  logEvent('core crossing', 'transit');
+                  // Flip the view while the interior hides the sky: the
+                  // visitor emerges facing BACK at the star and watches it
+                  // recede for the whole exit leg.
+                  viewLookBack = true;
+                  logEvent('view: look back', 'user');
+                }
+                lastTransitDist = centreDist;
+                lastTransitApproaching = approaching;
+                // Interior floor and ramp shape. The floor sets the crossing
+                // time (2R / floor); the divisor sets how gently speed decays
+                // toward the surface and builds after it — larger = softer
+                // entry/exit, longer trip. Tuned after "going in and out are
+                // very snappy": crossing ~7s, boundary transitions ~2s.
+                const vTransit = R / TRANSIT_CROSS_S;
+                let speed = Math.max(vTransit, surf / TRANSIT_RAMP_S);
+                // Rotation slowdown, smoothly on BOTH sides of the core.
+                // Inbound: a proximity dip — speed eases 1× → 0.25× linearly
+                // with distance to the core, so the brake for the flip builds
+                // over the whole inbound half instead of stepping ×0.25 the
+                // frame the flip starts. Outbound: the proximity factor would
+                // rise again, so the flip-alignment factor (0.25× until the
+                // 180° turn completes, eased by the view's own turn rate)
+                // holds it down; the ship releases only once it is actually
+                // facing back. min() of the two keeps every hand-off C0.
+                {
+                  const prox = centreDist < R ? 0.25 + 0.75 * (centreDist / R) : 1;
+                  let alignF = 1;
+                  if (viewLookBack) {
+                    const vm3 = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]) || 1;
+                    const align = -(viewDir[0]*velocity[0] + viewDir[1]*velocity[1] + viewDir[2]*velocity[2]) / vm3;
+                    alignF = 0.25 + 0.75 * Math.max(0, Math.min(1, (align + 0.2) / 1.15));
+                  }
+                  speed *= Math.min(prox, alignF);
+                }
+                const curMag = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+                if (curMag > 1) {
+                  const k = speed / curMag;
+                  velocity[0] *= k; velocity[1] *= k; velocity[2] *= k;
+                } else {
+                  // dead stop (shouldn't happen mid-transit): push toward centre
+                  velocity[0] = cdx / Math.max(1, centreDist) * speed;
+                  velocity[1] = cdy / Math.max(1, centreDist) * speed;
+                  velocity[2] = cdz / Math.max(1, centreDist) * speed;
+                }
+                if (!approaching && centreDist > R * TRANSIT_EXIT_R && !autopilotTransitDone) {
+                  autopilotTransitDone = true;
+                  logEvent('transit clear @' + TRANSIT_EXIT_R + 'R', 'transit');
+                }
+              } else {
               // Linger: arrival behaviour. Two knobs:
               //   arrivalHoldSec   — freeze in place for N sec after arrival
               //   arrivalDriftFrac — drift speed as fraction of designSpeed
@@ -2885,10 +3597,7 @@
                 velocity[1] = fy * targetMag;
                 velocity[2] = fz * targetMag;
               }
-              // No arrival look-at: nothing aims the view at the body it just
-              // reached. It sails past on the tangential linger vector and,
-              // because the view follows that vector, the body sweeps out of
-              // frame as the camera banks onto the new heading.
+              }
               tvx = velocity[0]; tvy = velocity[1]; tvz = velocity[2];
             }
           }
@@ -2976,12 +3685,34 @@
         }
         lastVelDirMag = m;
       }
+      // ===== velocity MAGNITUDE slew limiter (upward only) =====
+      // The direction limiter above stops the vector turning abruptly, but
+      // nothing stopped it SCALING abruptly — the realtime strip showed two
+      // vertical cliffs per trip: arrival (the transit profile taking over
+      // from the brake corridor a decade higher) and handoff (transit-exit
+      // speed leaping to warp). Cap the upward rate in log-space so speed-ups
+      // sweep across decades instead of teleporting. Deceleration is
+      // deliberately UNBOUNDED: the brake clamps are collision safety, and
+      // capping them would overshoot the camera into bodies.
+      {
+        const m2 = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+        if (m2 > 1 && lastVelMag > 1 && m2 > lastVelMag) {
+          const maxUp = lastVelMag * Math.pow(10, VEL_SLEW_DECADES_PER_S * dt);
+          if (m2 > maxUp) {
+            const k = maxUp / m2;
+            velocity[0] *= k; velocity[1] *= k; velocity[2] *= k;
+            lastVelMag = maxUp;
+          } else lastVelMag = m2;
+        } else lastVelMag = m2;
+      }
       // Apply smoothed velocity to camera position
       cam[0] += velocity[0] * dt;
       cam[1] += velocity[1] * dt;
       cam[2] += velocity[2] * dt;
       const camV = Math.sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
       lastCamV = camV;
+      sampleTimeline(camV);
+      if (debugPlotPanel && !debugPlotPanel.classList.contains('hidden')) drawEventTimeline();
       // Sample velocity for the debug curve overlay (only while autopilot is
       // traveling — the overlay is the trip's velocity profile).
       if (autopilotActive && autopilotPhase === 'traveling') {
@@ -3057,15 +3788,11 @@
       maybeUpdateUrl(nowMs);
 
       ctx.clearRect(0, 0, W, H);
-      const dark = isDark();
+      // The site is dark only. `dark` is kept as a local constant rather than
+      // threaded out of every renderer, so the per-object draw code reads the
+      // same as before; the light branches are gone.
+      const dark = true;
       if (starGL) starGL.begin();
-      // soft tint in light mode so stars read. With the GL layer active the
-      // wash lives in its clear colour instead — painting it here would sit
-      // above the GL stars and mute them.
-      if (!dark && !starGL) {
-        ctx.fillStyle = 'rgba(245,247,250,0.5)';
-        ctx.fillRect(0, 0, W, H);
-      }
 
       const ccx = Math.floor(cam[0] / CHUNK_SIZE);
       const ccy = Math.floor(cam[1] / CHUNK_SIZE);
@@ -3090,6 +3817,16 @@
       const renderD2 = RENDER_DISTANCE * RENDER_DISTANCE;
 
       const drawList = []; // painter's-algorithm list: every visible object, sorted far→near
+      // Nearest star this frame (dist/radius ratio) — drives the interior
+      // wash. Tracked in the COLLECTION loop, before any projection or
+      // off-screen cull: after the core crossing the star is BEHIND the
+      // camera and never reaches the draw list, and draw-side tracking made
+      // the interior vanish one frame past the core — the whole exit half of
+      // every transit rendered as raw space.
+      let nearestStarRatio = Infinity;
+      const nearestStarCol = [255, 240, 220];
+      const nearestStarPos = [0, 0, 0];
+      let nearestStarR = 1;
       // Unit vector along current camera velocity (world frame). Used for the
       // velocity-aligned Doppler cosine: cos θ = (source direction · v̂). Camera
       // facing is independent of velocity in vector-translation autopilot, so
@@ -3130,11 +3867,21 @@
                 nearestBHd2 = d2;
                 nearestBHrs = obj.physRadius || 1e4;
               }
+              // Interior tracking BEFORE every cull — a star being behind the
+              // camera must not end its interior wash while we are inside it.
+              if (obj.type === 'star' && obj.physRadius > 0 && d2 < obj.physRadius * obj.physRadius * 9) {
+                const r = Math.sqrt(d2) / obj.physRadius;
+                if (r < nearestStarRatio) {
+                  nearestStarRatio = r;
+                  nearestStarCol[0] = obj.cr; nearestStarCol[1] = obj.cg; nearestStarCol[2] = obj.cb;
+                  nearestStarPos[0] = obj.wx; nearestStarPos[1] = obj.wy; nearestStarPos[2] = obj.wz;
+                  nearestStarR = obj.physRadius;
+                }
+              }
               if (d2 > renderD2) continue;
               // Culled here rather than at draw time so distant scenery costs
-              // no projection or aberration work either. Light mode uses the
-              // much shorter radius — see BG_RENDER_FRAC_LIGHT.
-              if (obj.bg && d2 > (dark ? BG_RENDER_D2 : BG_RENDER_D2_LIGHT)) continue;
+              // no projection or aberration work either.
+              if (obj.bg && d2 > BG_RENDER_D2) continue;
               // Relativistic aberration in the VELOCITY frame (not camera frame).
               // We rotate the source direction around the perpendicular plane to
               // velocity by the aberration angle, then project the aberrated
@@ -3222,7 +3969,15 @@
         ctx.fill();
         ctx.globalCompositeOperation = 'source-over';
       }
+      // The 2d body canvas sits ABOVE the GL interior wash, so background
+      // planets/nebulae/black holes would paint on top of a star's interior
+      // as ghosts. Dim every 2d draw by the interior fade. Set per item —
+      // several body renderers reset globalAlpha internally.
+      // Matches the interior wash band exactly — dimming background bodies
+      // while still outside the star was part of the same haze.
+      const bodyAlpha2d = starGL ? Math.max(0, 1 - Math.min(1, (1.02 - Math.min(1.02, nearestStarRatio)) / 0.14)) : 1;
       for (let _idx = 0; _idx < drawList.length; _idx++) {
+        ctx.globalAlpha = bodyAlpha2d;
         const _item = drawList[_idx];
         const obj = _item.obj;
         const proj = _item.proj;
@@ -3231,7 +3986,22 @@
 
         if (_item.type === 'star') {
           const angRad = obj.physRadius / 1e15 * proj.k / gammaTime;
-          if (angRad > 6) {
+          // 3D impostor path: any star bigger than a couple of pixels becomes
+          // a shaded sphere on the GL layer — limb, granulation, corona —
+          // replacing both 2d tiers below (which remain as the no-WebGL
+          // fallback). Colour is Doppler-shifted here in JS, unwhitened:
+          // resolved discs keep their real spectral colour.
+          if (starGL && starGL.hasBodies() && angRad > 2) {
+            let br = obj.cr, bg2 = obj.cg, bb2 = obj.cb;
+            if (beta > 0.01) {
+              const gamma = 1 / Math.sqrt(1 - beta * beta);
+              const D = gamma * (1 + beta * cosTvel);
+              const dop = dopplerColor(br, bg2, bb2, D);
+              br = (dop >> 16) & 0xff; bg2 = (dop >> 8) & 0xff; bb2 = dop & 0xff;
+            }
+            starGL.pushBody(proj.px, proj.py, angRad, br, bg2, bb2, ((objHash(obj) & 0xffff) / 0xffff));
+            // (interior tracking happens in the collection loop, pre-cull)
+          } else if (angRad > 6) {
             const tex = getStarTexture(obj);
             ctx.drawImage(tex, proj.px - angRad, proj.py - angRad, angRad * 2, angRad * 2);
             applyDopplerTint(proj.px, proj.py, angRad, cosTvel);
@@ -3347,14 +4117,7 @@
               // no business being time-dilated by the camera's velocity.
               a *= 1 - STAR_TWINKLE * (0.5 + 0.5 * Math.sin(tAnimSec * twRate + twPhase));
             }
-            if (dark) {
-              drawStar(proj.px, proj.py, cr, cg, cb, a, size);
-            } else {
-              const rr = Math.min(60, Math.floor(255 - cr) * 0.3 | 0);
-              const gg = Math.min(60, Math.floor(255 - cg) * 0.3 | 0);
-              const bb = Math.min(60, Math.floor(255 - cb) * 0.3 | 0);
-              drawStar(proj.px, proj.py, rr, gg, bb, a * 0.6, size);
-            }
+            drawStar(proj.px, proj.py, cr, cg, cb, a, size);
           }
 
         } else if (_item.type === 'planet') {
@@ -3373,6 +4136,16 @@
             ctx.fillStyle = grad;
             ctx.beginPath(); ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2); ctx.fill();
           } else {
+            // ===== ring, far half =====
+            // A ring only reads as 3D if the planet occludes the half that
+            // passes BEHIND it. Canvas has no depth buffer, so the ring is
+            // split: the far arc is painted first, the body covers its middle,
+            // and the near arc goes on top afterwards. Drawing the full
+            // ellipse in one pass (the old code) put the whole ring in front,
+            // which is why it looked pasted on rather than encircling.
+            // Canvas ellipse angles: 0 = +x, sweeping through +y (screen
+            // DOWN) for 0..π. So π..2π is the top of the ellipse = far side.
+            if (obj.hasRing && rad > 2) drawPlanetRing(obj, proj, rad, depth, 'far');
             const tex = getPlanetTexture(obj);
             ctx.drawImage(tex, proj.px - rad, proj.py - rad, rad * 2, rad * 2);
             applyDopplerTint(proj.px, proj.py, rad, cosTvel);
@@ -3469,30 +4242,16 @@
                 ctx.restore();
               }
             }
-            // Ring (existing) — keep below the atmosphere/storm details so it
-            // sits on top of the body but under the very outermost glow.
-            if (obj.hasRing && rad > 2) {
-              const ringA = Math.min(0.75, 0.4 + depth * 0.5);
-              ctx.strokeStyle = `rgba(${obj.cr},${obj.cg},${obj.cb},${ringA.toFixed(2)})`;
-              ctx.lineWidth = Math.max(0.6, rad * 0.12);
-              ctx.beginPath();
-              ctx.ellipse(proj.px, proj.py, rad * 1.7, rad * 0.45, 0.4, 0, Math.PI * 2);
-              ctx.stroke();
-              // Inner ring division for detail
-              if (rad > 30) {
-                ctx.strokeStyle = `rgba(${(obj.cr*0.7)|0},${(obj.cg*0.7)|0},${(obj.cb*0.7)|0},${(ringA * 0.6).toFixed(2)})`;
-                ctx.lineWidth = Math.max(0.4, rad * 0.05);
-                ctx.beginPath();
-                ctx.ellipse(proj.px, proj.py, rad * 1.45, rad * 0.38, 0.4, 0, Math.PI * 2);
-                ctx.stroke();
-              }
-            }
+            // ===== ring, near half =====
+            // Painted last so it crosses in front of the body, completing the
+            // encirclement begun by the far half above.
+            if (obj.hasRing && rad > 2) drawPlanetRing(obj, proj, rad, depth, 'near');
           }
 
         } else if (_item.type === 'nebula') {
           const rad = Math.min(4000, obj.physRadius / 1e15 * proj.k / gammaTime);
           if (rad < 8) continue;
-          ctx.globalCompositeOperation = dark ? 'lighter' : 'multiply';
+          ctx.globalCompositeOperation = 'lighter';
           const grad = ctx.createRadialGradient(proj.px, proj.py, 0, proj.px, proj.py, rad);
           grad.addColorStop(0,   `rgba(${obj.cr},${obj.cg},${obj.cb},0.22)`);
           grad.addColorStop(0.4, `rgba(${obj.cr},${obj.cg},${obj.cb},0.07)`);
@@ -3623,10 +4382,37 @@
         }
       }
 
+      ctx.globalAlpha = 1;   // undo the interior body-dim for later 2d draws
       // One upload + one draw call for every star dot batched this frame.
-      // Light mode drops the skirt entirely: a dark halo around a dark dot on
-      // a light page reads as smudge, not glow.
-      if (starGL) starGL.flush(dark, DOT_GLOW_SCALE, dark ? STAR_HALO_ALPHA : 0);
+      if (starGL) {
+        starGL.flush(dark, DOT_GLOW_SCALE, STAR_HALO_ALPHA);
+        starGL.flushBodies(tAnimSec);
+        // Interior wash — INSIDE the surface only (1.02R → 0.88R). This is a
+        // fullscreen overlay, so any fade band reaching outside the star hazes
+        // the entire view, sky included, while the star is still just a disc
+        // ahead: it read as flying through mist. It used to start at 1.6R,
+        // which meant ~67% opaque fog at 1.2R — well outside the body.
+        //
+        // Nothing is lost by starting at the surface: on approach the impostor
+        // quad already fills the screen with photosphere (it spans 2.6 stellar
+        // radii, so past ~2.6R out it covers everything), and the wash only
+        // has to take over once the camera is inside — and carry the exit
+        // half alone, where the star sits behind the camera and the impostor
+        // is no longer drawn at all. Advection comes from SIGNED progress
+        // along the motion so the convection keeps streaming past throughout.
+        if (nearestStarRatio < 1.02) {
+          const fade = Math.min(1, (1.02 - nearestStarRatio) / 0.14);
+          const depthFrac = Math.max(0, Math.min(1, nearestStarRatio)); // 0 core → 1 surface
+          let progress = 0;
+          const vm = Math.sqrt(velocity[0]*velocity[0] + velocity[1]*velocity[1] + velocity[2]*velocity[2]);
+          if (vm > 1) {
+            progress = ((cam[0] - nearestStarPos[0]) * velocity[0] +
+                        (cam[1] - nearestStarPos[1]) * velocity[1] +
+                        (cam[2] - nearestStarPos[2]) * velocity[2]) / (vm * nearestStarR);
+          }
+          starGL.interior(tAnimSec, nearestStarCol[0], nearestStarCol[1], nearestStarCol[2], depthFrac, fade, progress * 2.2, progress * 0.7);
+        }
+      }
 
       lastNearestD = nearestThisFrame === Infinity ? Infinity : Math.sqrt(nearestThisFrame);
       lastNearestR = nearestRThisFrame;
