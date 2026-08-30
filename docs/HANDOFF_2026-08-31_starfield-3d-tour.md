@@ -4,13 +4,14 @@
 **Project:** `alexyodude.github.io` (Astro 5, Tailwind, zero runtime JS deps)
 **Repo root:** `C:\Users\Alexyodude\Desktop\AlexFolder\Code\Github\alexyodude.github.io`
 **Remote:** `github.com/Alexyodude/Alexyodude.github.io` — branch `main`
-**Last commit:** `47e5ca7 feat(ui): drop floating side menu, move section anchors into nav bar`
-**Working tree:** **DIRTY — 7 files, +906/−135, all verified and building, NOT committed.**
+**Last commit:** `496a4d5 fix(ui): more vertical space between hero and about on mobile`
+**Working tree:** **CLEAN.** The +906/−135 is committed as `2e1a461`, `b88641c`, `496a4d5`.
+**Unpushed:** 7 commits ahead of `origin/main` — pushing deploys the live site, so it is the user's call.
 **Dev server:** `npm run preview` on `http://localhost:4321` (serves `dist/`, so rebuild before reloading)
 **Almost all work lives in one file:** `src/components/BackgroundStars.astro` (~4400 lines)
 
-> ⚠️ The single most important fact on this page: **the session's entire body of
-> work is uncommitted.** See open item #1.
+> Open item #1 (commit the working tree) is **done** as of 2026-08-31 05:10.
+> Nothing has been pushed. The next actionable item is #3 (stage 2 — planets).
 
 ---
 
@@ -291,7 +292,7 @@ All were `browser_evaluate` snippets against `window.__deepState` and
 
 ## File inventory
 
-### Modified this session (all uncommitted)
+### Modified this session (now committed — see item #1)
 
 | File | Δ | What |
 |---|---|---|
@@ -353,19 +354,11 @@ All were `browser_evaluate` snippets against `window.__deepState` and
 
 ## Open work / next priorities
 
-1. **COMMIT THE WORKING TREE — software-only, do this first.**
-   906 insertions of verified, building work are uncommitted and one `git
-   checkout` from gone. Suggested split:
-   ```bash
-   cd "$USERPROFILE/Desktop/AlexFolder/Code/Github/alexyodude.github.io"
-   git add src/components/BackgroundStars.astro
-   git commit -m "feat(stars): 3D star impostors with interiors, fly-through transit, realtime tour instrument"
-   git add src/styles/global.css src/pages/index.astro src/pages/archive.astro src/components/NavBar.astro
-   git commit -m "feat(ui): remove light mode — dark only"
-   git add src/components/Hero.astro src/components/About.astro
-   git commit -m "fix(ui): more vertical space between hero and about on mobile"
-   ```
-   Nothing is pushed. Pushing deploys the live site — that is the user's call.
+1. ~~**COMMIT THE WORKING TREE**~~ — **DONE 2026-08-31 05:10.** Committed as the
+   planned three-way split after re-verifying the build (`Complete!`, 2 pages):
+   `2e1a461` stars, `b88641c` light-mode removal, `496a4d5` mobile spacing.
+   Working tree clean. **Still not pushed** — the repo is 7 commits ahead of
+   `origin/main`, and pushing deploys the live site.
 
 2. **Get a real-GPU frame-rate reading — requires the user's machine.**
    Every perf number here is software WebGL (SwiftShader) in automation. Open
@@ -401,11 +394,15 @@ All were `browser_evaluate` snippets against `window.__deepState` and
 ## Commits this session
 
 ```
+496a4d5 fix(ui): more vertical space between hero and about on mobile
+b88641c feat(ui): remove light mode — dark only
+2e1a461 feat(stars): 3D star impostors with interiors, fly-through transit, realtime tour instrument
+61db544 docs: handoff for starfield 3D bodies + tour redesign (2026-08-31)
 47e5ca7 feat(ui): drop floating side menu, move section anchors into nav bar
 4dd1b26 feat(stars): WebGL star layer, travel-locked view, yotta-style field
 ```
 
-Everything after `47e5ca7` is uncommitted. See open item #1.
+All committed, none pushed.
 
 ---
 
