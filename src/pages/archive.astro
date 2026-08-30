@@ -14,17 +14,9 @@ import Footer from '../components/Footer.astro';
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Archive — alexyodude.com</title>
     <meta name="description" content="Archived work — pieces kept accessible but off the main page." />
+    <!-- Dark only — see index.astro. -->
     <script is:inline>
-      (function () {
-        try {
-          var stored = localStorage.getItem('theme');
-          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-          var theme = stored || (prefersDark ? 'dark' : 'light');
-          document.documentElement.setAttribute('data-theme', theme);
-        } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'light');
-        }
-      })();
+      document.documentElement.setAttribute('data-theme', 'dark');
     </script>
   </head>
   <body>

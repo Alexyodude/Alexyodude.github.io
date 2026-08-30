@@ -2,15 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Dark only. The starfield is the site's main surface and it only works
+   against black — on a light page the stars have to render as dark dots,
+   which reads as dust rather than sky. The [data-theme="dark"] selector is
+   kept so the attribute (and component CSS keyed to it) still matches. */
 :root,
-[data-theme="light"] {
-  --color-bg: #ffffff;
-  --color-fg: #0a0a0a;
-  --color-muted: #6b7280;
-  --color-accent: #2563eb;
-  --color-border: #e5e7eb;
-}
-
 [data-theme="dark"] {
   --color-bg: #0a0a0a;
   --color-fg: #fafafa;

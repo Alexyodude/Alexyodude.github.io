@@ -17,17 +17,11 @@ import Footer from '../components/Footer.astro';
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Alex — alexyodude.com</title>
     <meta name="description" content="Personal site of Alex." />
+    <!-- Dark only — no stored preference, no prefers-color-scheme negotiation.
+         Set here rather than as a static attribute on <html> so it lands
+         before first paint either way. -->
     <script is:inline>
-      (function () {
-        try {
-          var stored = localStorage.getItem('theme');
-          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-          var theme = stored || (prefersDark ? 'dark' : 'light');
-          document.documentElement.setAttribute('data-theme', theme);
-        } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'light');
-        }
-      })();
+      document.documentElement.setAttribute('data-theme', 'dark');
     </script>
   </head>
   <body>
