@@ -2,7 +2,7 @@
          Set here rather than as a static attribute on <html> so it lands
          before first paint either way. --><script>
       document.documentElement.setAttribute('data-theme', 'dark');
-    </script><link rel="stylesheet" href="/_astro/archive.C9nTwVEZ.css">
+    </script><link rel="stylesheet" href="/_astro/archive.Fj_iYuMA.css">
 <style>.hero-name[data-astro-cid-bbe6dxrz]{display:flex;flex-wrap:wrap;gap:.5em;line-height:1.05}.hero-name-part[data-astro-cid-bbe6dxrz]{display:inline-block}@media(max-width:640px){.hero-name[data-astro-cid-bbe6dxrz]{flex-direction:column;gap:.1em}}.social-icon[data-astro-cid-bbe6dxrz]{display:inline-block;width:22px;height:22px;background-color:currentColor;-webkit-mask:var(--icon) center / contain no-repeat;mask:var(--icon) center / contain no-repeat}.timeline-row[data-astro-cid-v2cbyr3p]{overflow-x:auto;cursor:grab;scrollbar-width:none;-moz-user-select:none;user-select:none;-webkit-user-select:none;padding-bottom:.5rem}.timeline-row[data-astro-cid-v2cbyr3p]::-webkit-scrollbar{display:none}.timeline-row[data-astro-cid-v2cbyr3p].dragging{cursor:grabbing}.timeline-content[data-astro-cid-v2cbyr3p]{position:relative;display:inline-flex;gap:12px;min-width:100%}.timeline-entry[data-astro-cid-v2cbyr3p]{position:relative;flex-shrink:0;width:144px;padding-top:1.25rem;z-index:3}.timeline-dot[data-astro-cid-v2cbyr3p]{position:absolute;left:50%;top:8px;transform:translate(-50%);width:12px;height:12px;border-radius:9999px;background:var(--color-accent);box-shadow:0 0 0 4px var(--color-bg)}.timeline-date[data-astro-cid-v2cbyr3p]{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-muted);text-align:center}.timeline-title[data-astro-cid-v2cbyr3p]{margin-top:4px;font-size:14px;font-weight:600;line-height:1.2;text-align:center}.timeline-track[data-astro-cid-v2cbyr3p]{position:absolute;left:72px;right:72px;top:14px;height:1px;background:var(--color-border);pointer-events:none;z-index:1}.timeline-progress[data-astro-cid-v2cbyr3p]{position:absolute;left:72px;top:14px;height:2px;margin-top:-1px;width:0;background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,0) 35%,rgba(255,255,255,.85) 50%,rgba(255,255,255,0) 65%,transparent 100%) 0 0 / 200% 100% repeat-x,linear-gradient(90deg,#7c3aed,#2563eb,#06b6d4 44%,#10b981,#f59e0b 80%,#ef4444) 0 0 / 200% 100% repeat-x;background-blend-mode:screen,normal;box-shadow:0 0 6px #6366f18c,0 0 14px #ec48994d;pointer-events:none;z-index:2;animation:timelineProgress 8s ease-out 1 forwards,timelineShimmer 2.2s linear infinite,timelineHueShift 6s linear infinite}.timeline-pulse[data-astro-cid-v2cbyr3p]{position:absolute;top:14px;left:72px;width:10px;height:10px;margin-top:-5px;margin-left:-5px;border-radius:9999px;background:conic-gradient(from 0deg,#7c3aed,#2563eb,#06b6d4,#10b981,#f59e0b,#ef4444,#7c3aed);box-shadow:0 0 8px #6366f1f2,0 0 18px #ec4899a6,0 0 30px #06b6d466;pointer-events:none;z-index:4;animation:timelineMove 8s ease-out 1 forwards,timelinePulse 1.4s ease-in-out infinite,timelineSpin 3s linear infinite}@keyframes timelineMove{0%{left:72px}to{left:calc(100% - 72px)}}@keyframes timelineProgress{0%{width:0}to{width:calc(100% - 144px)}}@keyframes timelinePulse{0%,to{opacity:.55;transform:scale(1) rotate(0)}50%{opacity:1;transform:scale(1.8) rotate(180deg)}}@keyframes timelineShimmer{0%{background-position:200% 0,0% 0}to{background-position:0% 0,-200% 0}}@keyframes timelineHueShift{0%{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}@keyframes timelineSpin{0%{background-image:conic-gradient(from 0deg,#7c3aed,#2563eb,#06b6d4,#10b981,#f59e0b,#ef4444,#7c3aed)}to{background-image:conic-gradient(from 360deg,#7c3aed,#2563eb,#06b6d4,#10b981,#f59e0b,#ef4444,#7c3aed)}}@media(prefers-reduced-motion:reduce){.timeline-progress[data-astro-cid-v2cbyr3p]{animation:timelineProgress 8s ease-out 1 forwards}.timeline-pulse[data-astro-cid-v2cbyr3p]{animation:timelineMove 8s ease-out 1 forwards,timelinePulse 1.4s ease-in-out infinite}}
 </style></head> <body> <!-- Star dots render on the WebGL layer; bodies (planets, black holes,
      nebulae, close-up stars) render on the 2d canvas stacked above it, so
@@ -277,6 +277,497 @@
         }
       }
 
+      // ===== PLANET program =====
+      // A lit sphere plus a raytraced ring, both from one impostor quad.
+      //
+      // The ring is not a decal and not a pair of arcs: the fragment shader
+      // intersects the view ray with the ring plane and compares that hit
+      // against the sphere's front surface, so the half passing behind the
+      // body is occluded by depth rather than by draw order. Both shadows
+      // then fall out of the same geometry - the planet's shadow thrown
+      // across the ring, and the ring's shadow banding the planet - instead
+      // of being painted on as gradients that had to be kept consistent with
+      // each other by hand.
+      //
+      // Light direction, ring normal and spin axis all arrive as VIEW-space
+      // uniforms, computed per frame in JS from seeded WORLD-space vectors.
+      // World-locked is the whole point: orbit the planet and the terminator
+      // stays put on the surface, which is exactly what the old baked-in
+      // view-space shading could never do.
+      const PVS = `
+        attribute vec2 a_corner;
+        uniform vec2 u_res;
+        uniform vec2 u_center;
+        uniform float u_rpx;
+        varying vec2 v_q;
+        void main() {
+          v_q = a_corner;
+          vec2 px = u_center + a_corner * u_rpx;
+          vec2 clip = (px / u_res) * 2.0 - 1.0;
+          gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+        }`;
+      const PFS = `
+        ${PRECISION_GLSL}
+        varying vec2 v_q;
+        uniform sampler2D u_map;     // equirectangular albedo, broad strokes only
+        uniform vec3 u_light;        // view space, planet -> light
+        uniform vec3 u_bx;           // planet basis in view space
+        uniform vec3 u_by;           // spin axis
+        uniform vec3 u_bz;
+        uniform float u_spin;        // longitude offset, in turns
+        uniform float u_ring;
+        uniform vec3 u_rn;           // ring plane normal, view space
+        uniform vec3 u_tint;         // Doppler multiply
+        uniform float u_atmos;
+        uniform vec3 u_acol;
+        uniform float u_fade;
+        uniform float u_rpx;         // radius in px - gives us the pixel size
+        uniform float u_t;
+        uniform float u_seed;
+        uniform float u_warp;        // coastline domain-warp strength
+        uniform float u_relief;      // bump strength
+        uniform float u_spec;        // specular strength (water/ice)
+        uniform float u_cloud;       // cloud opacity
+        uniform float u_emis;        // self-illumination (lava)
+        ${NOISE_GLSL}
+
+        const float RIN = 1.24;
+        const float ROUT = 2.08;
+
+        float ringDens(float t) {
+          float d = 1.0;
+          d *= 1.0 - 0.94 * exp(-pow((t - 0.47) / 0.050, 2.0));
+          d *= 1.0 - 0.55 * exp(-pow((t - 0.79) / 0.028, 2.0));
+          d *= 1.0 - 0.40 * exp(-pow((t - 0.14) / 0.045, 2.0));
+          d *= 0.80 + 0.20 * sin(t * 47.0);
+          d *= 0.35 + 0.65 * min(1.0, t / 0.16);
+          d *= 1.0 - 0.55 * max(0.0, (t - 0.86) / 0.14);
+          return clamp(d, 0.0, 1.0);
+        }
+
+        void main() {
+          float d2 = dot(v_q, v_q);
+          float d = sqrt(d2);
+          // One pixel measured in v_q units. The impostor knows its own radius
+          // in px, so the silhouette can be antialiased exactly without
+          // needing the derivatives extension.
+          float pxw = 1.0 / max(u_rpx, 1.0);
+          float cov = smoothstep(1.0 + pxw, 1.0 - pxw, d);
+
+          vec3 surf = vec3(0.0);
+          float ndl = 0.0;
+          float nz = sqrt(max(0.0, 1.0 - min(d2, 1.0)));
+          vec3 N = vec3(v_q.x, v_q.y, -nz);
+
+          if (cov > 0.0) {
+            // Into the planet's own frame.
+            float sx = dot(N, u_bx), sy = dot(N, u_by), sz = dot(N, u_bz);
+            float lat = asin(clamp(sy, -1.0, 1.0)) / 1.5707963;
+            float lon = atan(sx, sz) / 3.1415927 + u_spin;
+            vec2 uv = vec2(fract(lon * 0.5 + 0.5), clamp(lat * 0.5 + 0.5, 0.002, 0.998));
+
+            // Surface-space coordinate for all procedural detail. Longitude is
+            // scaled by cos(lat) so features do not smear into stripes as they
+            // approach the poles.
+            // All procedural detail is sampled from the SURFACE POINT, never
+            // from lon/lat. atan-based longitude has a derivative singularity
+            // at the silhouette - a whole hemisphere crowds into the last few
+            // pixels - so noise sampled in it smears into radial streaks
+            // there, and the terminator's steep ramp then amplifies those
+            // smeared normals into visible fur. Damping the noise at the limb
+            // did not fix it because the fur reached ~20% of the radius
+            // inward, where the limb weight is already 1.
+            //
+            // The unit surface vector is just the normal, so its screen
+            // derivative is bounded everywhere. Two planar projections of it
+            // give a well-behaved 2D domain with no pole and no seam. The
+            // texture lookup still uses lon/lat because the map is
+            // equirectangular, but that path is mipmapped and carries only
+            // broad strokes.
+            vec3 Ps = vec3(sx, sy, sz);
+            vec2 qa = vec2(Ps.x, Ps.y) * 3.2 + u_seed;
+            vec2 qb = vec2(Ps.z, Ps.y) * 3.2 + u_seed * 1.7;
+            float lw = smoothstep(0.0, 0.16, nz);
+
+            // Fractal coastline. The map carries only broad strokes at
+            // 512x256; magnified straight it gives the stair-stepped border
+            // that made the planet look printed. Warping the lookup with fine
+            // noise turns that smooth boundary into detailed coast at any
+            // zoom, at no extra texture cost.
+            vec2 warp = vec2(fbm(qa * 1.9), fbm(qb * 1.9 + 11.7)) - 0.5;
+            vec3 alb = texture2D(u_map, uv + warp * u_warp).rgb;
+            // Grazing angles look through more air than ground.
+            alb = mix(u_acol * 0.45, alb, 0.62 + 0.38 * lw);
+
+            // Fine mottling, so ocean and land each carry variation instead of
+            // reading as two flat fills.
+            float grain = fbm(qa * 4.2 + 3.1) * 0.5 + fbm(qb * 4.2) * 0.5;
+            alb *= 0.86 + 0.28 * grain;
+
+            // Relief: height field, normal by finite difference, applied in
+            // the local tangent frame (east/north from the spin axis).
+            float e = 0.05;
+            float hC = fbm(qa * 2.4);
+            float hX = fbm(qa * 2.4 + vec2(e, 0.0));
+            float hY = fbm(qa * 2.4 + vec2(0.0, e));
+            vec3 T = normalize(cross(u_by, N) + vec3(1e-5));
+            vec3 B = cross(N, T);
+            vec3 Nb = normalize(N + (T * (hC - hX) + B * (hC - hY)) * u_relief * 2.2);
+
+            ndl = dot(Nb, u_light);
+            // Tighter terminator than the old wide ramp, with a little wrap so
+            // the day/night boundary is not a hard line either.
+            float term = smoothstep(-0.11, 0.30, ndl);
+            // Ambient is warmer on the day side and near-black at night, so
+            // the dark limb stops looking like flat grey paint.
+            float shade = 0.11 + 0.95 * term;
+
+            // Ring shadow on the planet.
+            if (u_ring > 0.0 && abs(dot(u_rn, u_light)) > 1e-3) {
+              float sT = -dot(u_rn, N) / dot(u_rn, u_light);
+              if (sT > 0.0) {
+                float cr = length(N + sT * u_light);
+                if (cr > RIN && cr < ROUT) {
+                  shade *= 1.0 - 0.72 * ringDens((cr - RIN) / (ROUT - RIN)) * u_ring;
+                }
+              }
+            }
+
+            surf = alb * shade;
+
+            // Specular sun-glint. Water is the blue-dominant part of the
+            // albedo, so the highlight lands on sea and not on land - matte
+            // water was a big part of why this read as plastic.
+            if (u_spec > 0.0) {
+              float water = clamp((alb.b - max(alb.r, alb.g)) * 4.0, 0.0, 1.0);
+              vec3 H = normalize(u_light + vec3(0.0, 0.0, -1.0));
+              float sp2 = pow(max(0.0, dot(normalize(mix(N, Nb, 0.35)), H)), 48.0);
+              surf += vec3(1.0, 0.97, 0.88) * sp2 * water * u_spec * term;
+            }
+
+            // Self-illumination for lava worlds: the hot fraction glows on the
+            // night side instead of going black.
+            if (u_emis > 0.0) {
+              float hot = clamp((alb.r - alb.b) * 2.2, 0.0, 1.0);
+              surf += alb * hot * u_emis * (1.0 - term * 0.75);
+            }
+
+            // Cloud deck: its own layer, turning slightly faster than the
+            // surface, casting a soft shadow down onto it.
+            if (u_cloud > 0.0) {
+              vec2 cp = vec2((lon + u_t * 0.004) * clat, lat) * 3.2 + 57.0;
+              float cf = fbm(cp) * 0.65 + fbm(cp * 2.7) * 0.35;
+              float cover = smoothstep(0.52, 0.78, cf) * u_cloud;
+              // Shadow: sample the deck again, offset toward the light.
+              vec2 cs = cp + vec2(u_light.x, -u_light.y) * 0.22;
+              float sf = fbm(cs) * 0.65 + fbm(cs * 2.7) * 0.35;
+              surf *= 1.0 - 0.34 * smoothstep(0.52, 0.78, sf) * u_cloud;
+              surf = mix(surf, vec3(1.0, 0.99, 0.97) * (0.06 + 0.96 * term), cover);
+            }
+
+            // Atmosphere. Forward scattering makes the lit limb flare, and a
+            // trace of airglow keeps the night limb from being a dead edge.
+            if (u_atmos > 0.0) {
+              // Hug the limb. A wide, bright rim read as a detached bubble
+              // around the planet rather than as air on it.
+              float rim = pow(1.0 - nz, 7.0);
+              float fwd = 0.25 + 1.1 * max(0.0, ndl);
+              surf += u_acol * rim * u_atmos * fwd * 0.55;
+              surf += u_acol * pow(1.0 - nz, 11.0) * u_atmos * 0.05;
+            }
+          }
+
+          vec3 col = surf;
+          float a = cov;
+
+          // Ring, raytraced against the sphere (see the note on the program).
+          if (u_ring > 0.0 && abs(u_rn.z) > 1e-3) {
+            float t = -(u_rn.x * v_q.x + u_rn.y * v_q.y) / u_rn.z;
+            vec3 P = vec3(v_q.x, v_q.y, t);
+            float rr = length(P);
+            if (rr > RIN && rr < ROUT) {
+              bool blocked = (d < 1.0) && t > -nz;
+              if (!blocked) {
+                float dens = ringDens((rr - RIN) / (ROUT - RIN));
+                float pl = dot(P, u_light);
+                float perp2 = dot(P, P) - pl * pl;
+                if (pl < 0.0 && perp2 < 1.0) dens *= 0.20;
+                vec3 rcol = vec3(0.82, 0.80, 0.75) * (0.35 + 0.65 * abs(dot(u_rn, u_light)));
+                float ra = clamp(dens * 0.92 * u_ring, 0.0, 1.0);
+                col = col * (1.0 - ra) + rcol * ra;
+                a = a + ra * (1.0 - a);
+              }
+            }
+          }
+
+          if (a <= 0.002) discard;
+          col *= u_tint;
+          a *= u_fade;
+          gl_FragColor = vec4(col * a, a);   // premultiplied
+        }`;
+      const pvs = sh(gl.VERTEX_SHADER, PVS), pfs = sh(gl.FRAGMENT_SHADER, PFS);
+      let planProg = null, ploc = null, pquad = null;
+      const PLANET_QUAD_R = 2.4;   // room for the ring outer edge + atmosphere
+      if (pvs && pfs) {
+        planProg = gl.createProgram();
+        gl.attachShader(planProg, pvs); gl.attachShader(planProg, pfs); gl.linkProgram(planProg);
+        if (!gl.getProgramParameter(planProg, gl.LINK_STATUS)) { console.warn('starGL planet link:', gl.getProgramInfoLog(planProg)); planProg = null; }
+        else {
+          ploc = {
+            corner: gl.getAttribLocation(planProg, 'a_corner'),
+            res: gl.getUniformLocation(planProg, 'u_res'),
+            center: gl.getUniformLocation(planProg, 'u_center'),
+            rpx: gl.getUniformLocation(planProg, 'u_rpx'),
+            map: gl.getUniformLocation(planProg, 'u_map'),
+            light: gl.getUniformLocation(planProg, 'u_light'),
+            bx: gl.getUniformLocation(planProg, 'u_bx'),
+            by: gl.getUniformLocation(planProg, 'u_by'),
+            bz: gl.getUniformLocation(planProg, 'u_bz'),
+            spin: gl.getUniformLocation(planProg, 'u_spin'),
+            ring: gl.getUniformLocation(planProg, 'u_ring'),
+            rn: gl.getUniformLocation(planProg, 'u_rn'),
+            tint: gl.getUniformLocation(planProg, 'u_tint'),
+            atmos: gl.getUniformLocation(planProg, 'u_atmos'),
+            acol: gl.getUniformLocation(planProg, 'u_acol'),
+            fade: gl.getUniformLocation(planProg, 'u_fade'),
+            t: gl.getUniformLocation(planProg, 'u_t'),
+            seed: gl.getUniformLocation(planProg, 'u_seed'),
+            warp: gl.getUniformLocation(planProg, 'u_warp'),
+            relief: gl.getUniformLocation(planProg, 'u_relief'),
+            spec: gl.getUniformLocation(planProg, 'u_spec'),
+            cloud: gl.getUniformLocation(planProg, 'u_cloud'),
+            emis: gl.getUniformLocation(planProg, 'u_emis'),
+          };
+          const RQ = PLANET_QUAD_R;
+          pquad = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, pquad);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -RQ, -RQ,  RQ, -RQ,  -RQ, RQ,   -RQ, RQ,  RQ, -RQ,  RQ, RQ,
+          ]), gl.STATIC_DRAW);
+        }
+      }
+      // One GL texture per planet, keyed by object hash, evicted oldest-first
+      // like the canvas cache it replaces.
+      const mapTex = new Map();
+      const MAP_TEX_LIMIT = 24;
+      function planetMapTexture(key, makeCanvas) {
+        let t = mapTex.get(key);
+        if (t) return t;
+        t = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, makeCanvas());
+        // REPEAT on longitude so the seam closes as the body spins.
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        // Trilinear. Near the silhouette lon = atan(sx, sz) changes by a
+        // whole hemisphere across a few pixels, so a LINEAR-only lookup
+        // samples far-apart texels on adjacent fragments and shreds into
+        // radial fur. Mipmaps let the hardware pick a level that matches that
+        // compression. 512x256 is power-of-two, so this is legal in WebGL1.
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        if (mapTex.size >= MAP_TEX_LIMIT) {
+          const oldest = mapTex.keys().next().value;
+          gl.deleteTexture(mapTex.get(oldest));
+          mapTex.delete(oldest);
+        }
+        mapTex.set(key, t);
+        return t;
+      }
+
+      // ===== BLACK HOLE program =====
+      // Horizon, photon ring, accretion disc and jets in one impostor. The
+      // disc is the same ray-vs-plane annulus the planet ring uses, so its
+      // back half is occluded by the horizon on depth rather than by draw
+      // order - and unlike the old 2d version, which drew a fixed upper and
+      // lower ellipse half, the disc is a real plane that can be seen from
+      // any angle including edge-on.
+      //
+      // No gravitational lensing. Bending the background through the photon
+      // sphere needs the sky as a texture to sample, which is a much larger
+      // change; this keeps the disc honest and leaves lensing alone.
+      const BHFS = `
+        ${PRECISION_GLSL}
+        varying vec2 v_q;
+        uniform vec3 u_rn;      // disc axis (normal), view space
+        uniform float u_t;      // seconds
+        uniform float u_rate;   // orbital rate
+        uniform float u_fade;
+
+        const float DIN = 1.45;
+        const float DOUT = 4.3;
+
+        void main() {
+          float d2 = dot(v_q, v_q);
+          float d = sqrt(d2);
+          bool onEH = d2 < 1.0;
+          float zEH = onEH ? -sqrt(1.0 - d2) : 0.0;
+
+          vec3 col = vec3(0.0);
+          float a = 0.0;
+
+          // Event horizon: flat black, and opaque so it can occlude the disc.
+          if (onEH) { col = vec3(0.0); a = 1.0; }
+
+          // In-plane basis, for the orbital angle.
+          vec3 t0 = abs(u_rn.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+          vec3 e1 = normalize(cross(t0, u_rn));
+          vec3 e2 = cross(u_rn, e1);
+
+          // Accretion disc.
+          if (abs(u_rn.z) > 1e-3) {
+            float t = -(u_rn.x * v_q.x + u_rn.y * v_q.y) / u_rn.z;
+            vec3 P = vec3(v_q.x, v_q.y, t);
+            float rr = length(P);
+            if (rr > DIN && rr < DOUT && !(onEH && t > zEH)) {
+              float u = (rr - DIN) / (DOUT - DIN);
+              float ang = atan(dot(P, e2), dot(P, e1));
+              // Shear: inner orbits sweep faster, so the banding winds up.
+              float turb = 0.72 + 0.28 * sin(ang * 7.0 + u_t * u_rate * 6.0 - u * 9.0)
+                                * (0.6 + 0.4 * sin(ang * 3.0 - u_t * u_rate * 2.5));
+              // Relativistic beaming: the limb swinging toward the camera is
+              // brighter. Orbital velocity is perpendicular to both the axis
+              // and the radius; -z points at the camera.
+              vec3 vdir = normalize(cross(u_rn, P / rr));
+              float beam = clamp(1.0 + 1.7 * (-vdir.z), 0.18, 2.9);
+              vec3 hot = mix(vec3(1.0, 0.95, 0.80), vec3(1.0, 0.40, 0.13), u);
+              float bright = (1.0 - u * 0.72) * turb * beam;
+              vec3 dc = hot * bright * 1.35;
+              float da = clamp(bright * 0.95, 0.0, 1.0);
+              col = col * (1.0 - da) + dc * da;
+              a = a + da * (1.0 - a);
+            }
+          }
+
+          // Photon ring: the thin bright circle hugging the horizon.
+          float pr = exp(-pow((d - 1.13) / 0.055, 2.0));
+          if (pr > 0.004) {
+            vec3 pc = vec3(1.0, 0.86, 0.60) * pr * 1.5;
+            col += pc; a = max(a, pr * 0.9);
+          }
+
+          // Jets along the axis, projected to screen. A 2d cone about the
+          // axis' screen direction - the same approximation the 2d version
+          // used, which is indistinguishable at these sizes.
+          vec2 ax2 = vec2(u_rn.x, u_rn.y);
+          float axl = length(ax2);
+          if (axl > 1e-3) {
+            ax2 /= axl;
+            float sJ = dot(v_q, ax2);
+            float perp = length(v_q - sJ * ax2);
+            float aj = abs(sJ);
+            if (aj > 0.7 && aj < 6.5) {
+              float halfW = 0.16 + 0.085 * aj;
+              float prof = 1.0 - smoothstep(0.0, halfW, perp);
+              float falloff = 1.0 - smoothstep(0.7, 6.5, aj);
+              float ja = prof * falloff * 0.42;
+              col += vec3(0.62, 0.76, 1.0) * ja;
+              a = max(a, ja);
+            }
+          }
+
+          // Outer glow.
+          float halo = exp(-(d - 1.0) * 0.75) * 0.11;
+          if (d > 1.0 && halo > 0.002) {
+            col += vec3(1.0, 0.55, 0.25) * halo;
+            a = max(a, halo);
+          }
+
+          if (a <= 0.002) discard;
+          a *= u_fade;
+          gl_FragColor = vec4(col * a, a);   // premultiplied
+        }`;
+      const bhfs = sh(gl.FRAGMENT_SHADER, BHFS);
+      let bhProg = null, bhloc = null, bhquad = null;
+      const BH_QUAD_R = 7.0;
+      if (pvs && bhfs) {
+        bhProg = gl.createProgram();
+        gl.attachShader(bhProg, pvs); gl.attachShader(bhProg, bhfs); gl.linkProgram(bhProg);
+        if (!gl.getProgramParameter(bhProg, gl.LINK_STATUS)) { console.warn('starGL bh link:', gl.getProgramInfoLog(bhProg)); bhProg = null; }
+        else {
+          bhloc = {
+            corner: gl.getAttribLocation(bhProg, 'a_corner'),
+            res: gl.getUniformLocation(bhProg, 'u_res'),
+            center: gl.getUniformLocation(bhProg, 'u_center'),
+            rpx: gl.getUniformLocation(bhProg, 'u_rpx'),
+            rn: gl.getUniformLocation(bhProg, 'u_rn'),
+            t: gl.getUniformLocation(bhProg, 'u_t'),
+            rate: gl.getUniformLocation(bhProg, 'u_rate'),
+            fade: gl.getUniformLocation(bhProg, 'u_fade'),
+          };
+          const RB = BH_QUAD_R;
+          bhquad = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, bhquad);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -RB, -RB,  RB, -RB,  -RB, RB,   -RB, RB,  RB, -RB,  RB, RB,
+          ]), gl.STATIC_DRAW);
+        }
+      }
+
+      // ===== NEBULA program =====
+      // Volumetric-looking cloud from layered fbm inside a soft spherical
+      // falloff, drifting slowly. Replaces the 2d stack of radial gradients,
+      // sub-blobs and stroked wisps with actual structure: bright cores,
+      // filaments and dark absorption lanes from the same noise field, so it
+      // survives being flown toward instead of dissolving into circles.
+      const NFS = `
+        ${PRECISION_GLSL}
+        varying vec2 v_q;
+        uniform vec3 u_col;      // base colour 0..1
+        uniform vec3 u_col2;     // hue-shifted secondary
+        uniform float u_seed;
+        uniform float u_t;
+        uniform float u_fade;
+        ${NOISE_GLSL}
+        void main() {
+          float r = length(v_q);
+          if (r >= 1.0) discard;
+          // Soft spherical shell: full in the core, feathering to nothing.
+          float shell = smoothstep(1.0, 0.25, r);
+          vec2 p = v_q * 3.0 + u_seed;
+          // Large structure drifts; fine filaments drift against it so the
+          // cloud shears instead of sliding as one sheet.
+          float big  = fbm(p + vec2(u_t * 0.010, -u_t * 0.007));
+          float fine = fbm(p * 3.1 - vec2(u_t * 0.016, u_t * 0.011) + 31.0);
+          // Absorption lanes: a third field carves darkness through the glow.
+          float lane = fbm(p * 1.7 + vec2(-u_t * 0.006, u_t * 0.009) - 17.0);
+          float dens = shell * max(0.0, big * 0.9 + fine * 0.55 - 0.42);
+          dens *= 0.45 + 0.55 * smoothstep(0.25, 0.6, lane);
+          if (dens < 0.003) discard;
+          // Colour: secondary hue in the fine filaments, base in the body.
+          vec3 col = mix(u_col, u_col2, clamp(fine * 1.2 - 0.2, 0.0, 1.0));
+          // Bright core knots where both fields align.
+          col += vec3(0.25) * smoothstep(0.85, 1.15, big + fine * 0.5) * shell;
+          float a = clamp(dens * 0.55, 0.0, 0.5) * u_fade;
+          gl_FragColor = vec4(col * a, a);   // premultiplied, reads additive-soft
+        }`;
+      const nfs = sh(gl.FRAGMENT_SHADER, NFS);
+      let nebProg = null, nloc = null, nquad = null;
+      if (pvs && nfs) {
+        nebProg = gl.createProgram();
+        gl.attachShader(nebProg, pvs); gl.attachShader(nebProg, nfs); gl.linkProgram(nebProg);
+        if (!gl.getProgramParameter(nebProg, gl.LINK_STATUS)) { console.warn('starGL nebula link:', gl.getProgramInfoLog(nebProg)); nebProg = null; }
+        else {
+          nloc = {
+            corner: gl.getAttribLocation(nebProg, 'a_corner'),
+            res: gl.getUniformLocation(nebProg, 'u_res'),
+            center: gl.getUniformLocation(nebProg, 'u_center'),
+            rpx: gl.getUniformLocation(nebProg, 'u_rpx'),
+            col: gl.getUniformLocation(nebProg, 'u_col'),
+            col2: gl.getUniformLocation(nebProg, 'u_col2'),
+            seed: gl.getUniformLocation(nebProg, 'u_seed'),
+            t: gl.getUniformLocation(nebProg, 'u_t'),
+            fade: gl.getUniformLocation(nebProg, 'u_fade'),
+          };
+          nquad = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, nquad);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -1, -1,  1, -1,  -1, 1,   -1, 1,  1, -1,  1, 1,
+          ]), gl.STATIC_DRAW);
+        }
+      }
+
       let cssW = 0, cssH = 0, cssDpr = 1;
       return {
         resize(w, h, dprV) {
@@ -285,7 +776,92 @@
           gl.viewport(0, 0, glCanvas.width, glCanvas.height);
           cssW = w; cssH = h; cssDpr = dprV;
         },
-        begin() { n = 0; bn = 0; },
+        // Clearing belongs HERE, at frame start, not in flush(). Bodies that
+        // draw immediately during the draw loop (planets) reach the buffer
+        // before the batched star flush runs, so clearing inside flush wiped
+        // them every frame - the planet was being rendered and then erased.
+        begin() {
+          n = 0; bn = 0;
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+        },
+        hasPlanets() { return !!planProg; },
+        hasBlackHoles() { return !!bhProg; },
+        hasNebulae() { return !!nebProg; },
+        drawNebula(o) {
+          if (!nebProg) return;
+          gl.useProgram(nebProg);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+          gl.uniform2f(nloc.res, cssW, cssH);
+          gl.uniform2f(nloc.center, o.px, o.py);
+          gl.uniform1f(nloc.rpx, o.rpx);
+          gl.uniform3f(nloc.col, o.r, o.g, o.b);
+          gl.uniform3f(nloc.col2, o.r2, o.g2, o.b2);
+          gl.uniform1f(nloc.seed, o.seed);
+          gl.uniform1f(nloc.t, o.t);
+          gl.uniform1f(nloc.fade, o.fade);
+          gl.bindBuffer(gl.ARRAY_BUFFER, nquad);
+          gl.enableVertexAttribArray(nloc.corner);
+          gl.vertexAttribPointer(nloc.corner, 2, gl.FLOAT, false, 0, 0);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        },
+        drawBlackHole(o) {
+          if (!bhProg) return;
+          gl.useProgram(bhProg);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+          gl.uniform2f(bhloc.res, cssW, cssH);
+          gl.uniform2f(bhloc.center, o.px, o.py);
+          gl.uniform1f(bhloc.rpx, o.rpx);
+          gl.uniform3f(bhloc.rn, o.rnx, o.rny, o.rnz);
+          gl.uniform1f(bhloc.t, o.t);
+          gl.uniform1f(bhloc.rate, o.rate);
+          gl.uniform1f(bhloc.fade, o.fade);
+          gl.bindBuffer(gl.ARRAY_BUFFER, bhquad);
+          gl.enableVertexAttribArray(bhloc.corner);
+          gl.vertexAttribPointer(bhloc.corner, 2, gl.FLOAT, false, 0, 0);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        },
+        // Immediate per-object draw: every planet binds its own albedo map, so
+        // there is nothing to batch. Large planets are rare - the small ones
+        // go down the point-sprite path - so the call count stays in single
+        // figures.
+        drawPlanet(o) {
+          if (!planProg) return;
+          const tex = planetMapTexture(o.key, o.makeCanvas);
+          gl.useProgram(planProg);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+          gl.uniform2f(ploc.res, cssW, cssH);
+          gl.uniform2f(ploc.center, o.px, o.py);
+          gl.uniform1f(ploc.rpx, o.rpx);
+          gl.uniform3f(ploc.light, o.lx, o.ly, o.lz);
+          gl.uniform3f(ploc.bx, o.bxx, o.bxy, o.bxz);
+          gl.uniform3f(ploc.by, o.byx, o.byy, o.byz);
+          gl.uniform3f(ploc.bz, o.bzx, o.bzy, o.bzz);
+          gl.uniform1f(ploc.spin, o.spin);
+          gl.uniform1f(ploc.ring, o.ring);
+          gl.uniform3f(ploc.rn, o.rnx, o.rny, o.rnz);
+          gl.uniform3f(ploc.tint, o.tr, o.tg, o.tb);
+          gl.uniform1f(ploc.atmos, o.atmos);
+          gl.uniform3f(ploc.acol, o.ar, o.ag, o.ab);
+          gl.uniform1f(ploc.fade, o.fade);
+          gl.uniform1f(ploc.t, o.t);
+          gl.uniform1f(ploc.seed, o.seed);
+          gl.uniform1f(ploc.warp, o.warp);
+          gl.uniform1f(ploc.relief, o.relief);
+          gl.uniform1f(ploc.spec, o.spec);
+          gl.uniform1f(ploc.cloud, o.cloud);
+          gl.uniform1f(ploc.emis, o.emis);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          gl.uniform1i(ploc.map, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, pquad);
+          gl.enableVertexAttribArray(ploc.corner);
+          gl.vertexAttribPointer(ploc.corner, 2, gl.FLOAT, false, 0, 0);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        },
         // dark mode: near-white points, additive — overlapping glows sum like
         // light — overlapping glows sum the way real light does.
         push(px, py, size, r, g, b, a) {
@@ -299,9 +875,7 @@
           n++;
         },
         flush(dark, glowScale, haloAlpha) {
-          gl.clearColor(0, 0, 0, 0);
-          gl.clear(gl.COLOR_BUFFER_BIT);
-          if (!n) return;
+          if (!n) return;   // clear happens in begin(), see note there
           gl.useProgram(prog);
           gl.uniform2f(loc.res, cssW, cssH);
           gl.uniform1f(loc.dpr, cssDpr);
@@ -2325,6 +2899,50 @@
     const planetTexCache = new Map();
     const PLANET_TEX_LIMIT = 120;
     const PLANET_TEX_SIZE = 256;
+    // Equirectangular albedo map for the GL impostor (2:1, power-of-two).
+    const PLANET_MAP_W = 512, PLANET_MAP_H = 256;
+    // World-locked frame for a planet: spin axis, an equatorial reference
+    // pair, a light direction and a rotation rate, all seeded from the object
+    // hash and computed once. These live in WORLD space and are rotated into
+    // view space per frame. That indirection is the entire reason the
+    // terminator now stays put on the surface while the camera moves - the
+    // old baked texture carried its lighting in view space, so the lit side
+    // followed the screen instead of the sun.
+    function planetFrame(obj) {
+      if (obj._pf) return obj._pf;
+      const r = mulberry32(objHash(obj) + 0x5bf0);
+      const pick = () => {
+        const z = r() * 2 - 1, th = r() * Math.PI * 2;
+        const sn = Math.sqrt(Math.max(0, 1 - z * z));
+        return [sn * Math.cos(th), sn * Math.sin(th), z];
+      };
+      const ax = pick();                       // spin axis
+      // Any vector not parallel to the axis gives an equatorial reference.
+      const t0 = Math.abs(ax[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+      let bx = [t0[1] * ax[2] - t0[2] * ax[1],
+                t0[2] * ax[0] - t0[0] * ax[2],
+                t0[0] * ax[1] - t0[1] * ax[0]];
+      const bl = Math.hypot(bx[0], bx[1], bx[2]) || 1;
+      bx = [bx[0] / bl, bx[1] / bl, bx[2] / bl];
+      const bz = [ax[1] * bx[2] - ax[2] * bx[1],
+                  ax[2] * bx[0] - ax[0] * bx[2],
+                  ax[0] * bx[1] - ax[1] * bx[0]];
+      // Turns per second. Slow enough to read as rotation rather than spin.
+      // Light direction. Biased toward -Z rather than uniformly random: the
+      // visit button always teleports to wz - approach and looks down +Z, so
+      // an unbiased light left half of all visited planets as a thin crescent
+      // (measured: disc mean luminance 25/255, 16% of the disc lit). The bias
+      // is on one axis only, so the terminator still falls at a different
+      // angle on every body and the tour - which arrives from arbitrary
+      // directions - still shows real phases.
+      const L = pick();
+      L[2] = -(0.40 + 0.55 * Math.abs(L[2]));
+      const Ln = Math.hypot(L[0], L[1], L[2]) || 1;
+      L[0] /= Ln; L[1] /= Ln; L[2] /= Ln;
+      obj._pf = { ax, bx, bz, L, rate: 0.008 + r() * 0.03 };
+      return obj._pf;
+    }
+
     function getPlanetTexture(obj) {
       const key = objHash(obj);
       let tex = planetTexCache.get(key);
@@ -2338,6 +2956,125 @@
       planetTexCache.set(key, tex);
       return tex;
     }
+    // Per-kind surface albedo at a point on the sphere, in the same
+    // normalised coordinates the old disc baker used: lon and lat both -1..1.
+    // Extracted so the equirectangular map (GL path) and the flat disc
+    // (no-WebGL fallback) draw identical art from one source.
+    //
+    // Albedo ONLY - no shading. The old baker multiplied a VIEW-SPACE lighting
+    // term into these bytes, which is exactly why a planet could never rotate:
+    // the terminator was welded to screen position instead of to the surface,
+    // so the texture was a decal frozen at one longitude. Lighting now happens
+    // in the shader, from the real surface normal.
+    const _alb = [0, 0, 0];
+    function planetAlbedo(obj, seed, kind, lon, lat, stormX, stormY) {
+      let cr, cg, cb;
+        if (kind === 'gas_giant') {
+          const turb = fbm2(lon * 1.5, lat * 6, seed, 4);
+          const bandV = 0.5 + 0.5 * Math.sin(lat * 8 + turb * 2);
+          const k = 0.65 + bandV * 0.6;
+          cr = obj.cr * k + (turb - 0.5) * 60;
+          cg = obj.cg * k + (turb - 0.5) * 40;
+          cb = obj.cb * k + (turb - 0.5) * 20;
+          const sd = (lon - stormX) * (lon - stormX) * 0.5 + (lat - stormY) * (lat - stormY) * 1.4;
+          if (sd < 0.018) {
+            const tS = 1 - Math.sqrt(sd / 0.018);
+            cr = cr * (1 - tS) + 215 * tS;
+            cg = cg * (1 - tS) + 80 * tS;
+            cb = cb * (1 - tS) + 55 * tS;
+          }
+        } else if (kind === 'ice_giant') {
+          const bandN = fbm2(lon * 1.2, lat * 4, seed, 3);
+          const k = 0.85 + bandN * 0.3;
+          cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
+        } else if (kind === 'ocean') {
+          const n = fbm2(lon * 3 + 50, lat * 3, seed, 5);
+          if (n > 0.52) {
+            const t = Math.min(1, (n - 0.52) / 0.35);
+            cr = 95 + t * 70; cg = 120 + t * 55; cb = 60 + t * 30;
+          } else {
+            const d2 = (0.52 - n) / 0.52;
+            cr = 35 + d2 * 25; cg = 80 + d2 * 30; cb = 165 + d2 * 35;
+          }
+          const cn = fbm2(lon * 6 + 200, lat * 6, seed + 7777, 3);
+          if (cn > 0.6) {
+            const ca = (cn - 0.6) / 0.4 * 0.55;
+            cr = cr * (1 - ca) + 245 * ca;
+            cg = cg * (1 - ca) + 245 * ca;
+            cb = cb * (1 - ca) + 245 * ca;
+          }
+        } else if (kind === 'iceworld') {
+          cr = 215; cg = 228; cb = 245;
+          const cn = fbm2(lon * 3 + 12, lat * 3, seed, 4);
+          const lineN = fbm2(lon * 18 + 90, lat * 18, seed + 31, 2);
+          if (cn < 0.42) { cr -= 35; cg -= 28; cb -= 18; }
+          if (lineN > 0.78) { cr -= 90; cg -= 70; cb -= 30; }
+        } else if (kind === 'lava') {
+          const n = fbm2(lon * 4 + 5, lat * 4, seed, 5);
+          cr = 30; cg = 12; cb = 8;
+          if (n > 0.52) {
+            const t = Math.pow((n - 0.52) / 0.48, 1.3);
+            cr = 30 + t * 225;
+            cg = 12 + t * 175;
+            cb = 8 + t * 35;
+          }
+        } else if (kind === 'shrouded') {
+          const n = fbm2(lon * 2.5, lat * 2.5, seed, 3);
+          const k = 0.88 + n * 0.22;
+          cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
+        } else {
+          // rocky / desert — texture noise + crater pits
+          const n = fbm2(lon * 4 + 3, lat * 4, seed, 5);
+          const k = 0.65 + n * 0.5;
+          cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
+          const cn = fbm2(lon * 20 + 50, lat * 20, seed + 333, 2);
+          if (cn > 0.74) {
+            const t = (cn - 0.74) / 0.26;
+            cr *= 1 - t * 0.45;
+            cg *= 1 - t * 0.45;
+            cb *= 1 - t * 0.45;
+          }
+        }
+      _alb[0] = cr; _alb[1] = cg; _alb[2] = cb;
+      return _alb;
+    }
+
+    // Equirectangular albedo map: x spans longitude -1..1, y latitude -1..1.
+    // The GL impostor samples this with the axial spin added to longitude, so
+    // the surface turns under a fixed light. 2:1 because longitude covers
+    // twice the angular range of latitude. Power-of-two so longitude can wrap
+    // with gl.REPEAT.
+    function buildPlanetMap(obj, seed) {
+      const MW = PLANET_MAP_W, MH = PLANET_MAP_H;
+      const canvasT = document.createElement('canvas');
+      canvasT.width = MW; canvasT.height = MH;
+      const cx2 = canvasT.getContext('2d');
+      const id = cx2.createImageData(MW, MH);
+      const data = id.data;
+      const kind = obj.kind || 'rocky';
+      const stormX = ((seed & 0xff) / 255) * 1.4 - 0.7;
+      const stormY = (((seed >> 8) & 0xff) / 255) * 0.6 - 0.3;
+      for (let y = 0; y < MH; y++) {
+        const lat = (y / (MH - 1)) * 2 - 1;
+        for (let x = 0; x < MW; x++) {
+          // x = MW would land on +1, which is the same meridian as -1, so the
+          // divisor is MW rather than MW-1 and the seam closes under REPEAT.
+          const lon = (x / MW) * 2 - 1;
+          const c = planetAlbedo(obj, seed, kind, lon, lat, stormX, stormY);
+          const i = (y * MW + x) * 4;
+          data[i]     = c[0] < 0 ? 0 : c[0] > 255 ? 255 : c[0] | 0;
+          data[i + 1] = c[1] < 0 ? 0 : c[1] > 255 ? 255 : c[1] | 0;
+          data[i + 2] = c[2] < 0 ? 0 : c[2] > 255 ? 255 : c[2] | 0;
+          data[i + 3] = 255;
+        }
+      }
+      cx2.putImageData(id, 0, 0);
+      return canvasT;
+    }
+
+    // Flat pre-shaded disc. Only reached when WebGL is unavailable; the GL
+    // path uses buildPlanetMap above. Kept byte-identical in look to what
+    // shipped before, baked view-space lighting and all.
     function buildPlanetTexture(obj, seed) {
       const SIZE = PLANET_TEX_SIZE;
       const canvasT = document.createElement('canvas');
@@ -2349,10 +3086,8 @@
       const center = SIZE / 2;
       const radPx = center - 1;
       const kind = obj.kind || 'rocky';
-      // Pick a storm/feature location deterministically (used by gas giants)
       const stormX = ((seed & 0xff) / 255) * 1.4 - 0.7;
       const stormY = (((seed >> 8) & 0xff) / 255) * 0.6 - 0.3;
-
       for (let y = 0; y < SIZE; y++) {
         for (let x = 0; x < SIZE; x++) {
           const dx = (x - center) / radPx;
@@ -2361,92 +3096,16 @@
           const i = (y * SIZE + x) * 4;
           if (r2 >= 1) { data[i + 3] = 0; continue; }
           const z = Math.sqrt(1 - r2);
-          // Spherical mapping for surface coords
-          const lon = Math.atan2(dx, z) / Math.PI; // -1..1
-          const lat = Math.asin(Math.max(-1, Math.min(1, dy))) / (Math.PI / 2); // -1..1
-
-          let cr, cg, cb;
-
-          if (kind === 'gas_giant') {
-            const turb = fbm2(lon * 1.5, lat * 6, seed, 4);
-            const bandV = 0.5 + 0.5 * Math.sin(lat * 8 + turb * 2);
-            const k = 0.65 + bandV * 0.6;
-            cr = obj.cr * k + (turb - 0.5) * 60;
-            cg = obj.cg * k + (turb - 0.5) * 40;
-            cb = obj.cb * k + (turb - 0.5) * 20;
-            const sd = (dx - stormX) * (dx - stormX) * 0.5 + (dy - stormY) * (dy - stormY) * 1.4;
-            if (sd < 0.018) {
-              const tS = 1 - Math.sqrt(sd / 0.018);
-              cr = cr * (1 - tS) + 215 * tS;
-              cg = cg * (1 - tS) + 80 * tS;
-              cb = cb * (1 - tS) + 55 * tS;
-            }
-          } else if (kind === 'ice_giant') {
-            const bandN = fbm2(lon * 1.2, lat * 4, seed, 3);
-            const k = 0.85 + bandN * 0.3;
-            cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
-          } else if (kind === 'ocean') {
-            const n = fbm2(lon * 3 + 50, lat * 3, seed, 5);
-            if (n > 0.52) {
-              const t = Math.min(1, (n - 0.52) / 0.35);
-              cr = 95 + t * 70; cg = 120 + t * 55; cb = 60 + t * 30;
-            } else {
-              const d2 = (0.52 - n) / 0.52;
-              cr = 35 + d2 * 25; cg = 80 + d2 * 30; cb = 165 + d2 * 35;
-            }
-            const cn = fbm2(lon * 6 + 200, lat * 6, seed + 7777, 3);
-            if (cn > 0.6) {
-              const ca = (cn - 0.6) / 0.4 * 0.55;
-              cr = cr * (1 - ca) + 245 * ca;
-              cg = cg * (1 - ca) + 245 * ca;
-              cb = cb * (1 - ca) + 245 * ca;
-            }
-          } else if (kind === 'iceworld') {
-            cr = 215; cg = 228; cb = 245;
-            const cn = fbm2(lon * 3 + 12, lat * 3, seed, 4);
-            const lineN = fbm2(lon * 18 + 90, lat * 18, seed + 31, 2);
-            if (cn < 0.42) { cr -= 35; cg -= 28; cb -= 18; }
-            if (lineN > 0.78) { cr -= 90; cg -= 70; cb -= 30; }
-          } else if (kind === 'lava') {
-            const n = fbm2(dx * 4 + 5, dy * 4, seed, 5);
-            cr = 30; cg = 12; cb = 8;
-            if (n > 0.52) {
-              const t = Math.pow((n - 0.52) / 0.48, 1.3);
-              cr = 30 + t * 225;
-              cg = 12 + t * 175;
-              cb = 8 + t * 35;
-            }
-          } else if (kind === 'shrouded') {
-            const n = fbm2(lon * 2.5, lat * 2.5, seed, 3);
-            const k = 0.88 + n * 0.22;
-            cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
-          } else {
-            // rocky / desert — texture noise + crater pits
-            const n = fbm2(lon * 4 + 3, lat * 4, seed, 5);
-            const k = 0.65 + n * 0.5;
-            cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
-            const cn = fbm2(lon * 20 + 50, lat * 20, seed + 333, 2);
-            if (cn > 0.74) {
-              const t = (cn - 0.74) / 0.26;
-              cr *= 1 - t * 0.45;
-              cg *= 1 - t * 0.45;
-              cb *= 1 - t * 0.45;
-            }
-          }
-
-          // Sphere shading: limb darkening — bright at center, darker at edge
-          const lightAng = -0.55; // light from upper-left
-          const lightX = Math.cos(lightAng);
-          const lightY = Math.sin(lightAng);
-          const lighting = Math.max(0, dx * lightX + dy * lightY + z * 0.9);
+          const lon = Math.atan2(dx, z) / Math.PI;
+          const lat = Math.asin(Math.max(-1, Math.min(1, dy))) / (Math.PI / 2);
+          const c = planetAlbedo(obj, seed, kind, lon, lat, stormX, stormY);
+          const lightAng = -0.55;
+          const lighting = Math.max(0, dx * Math.cos(lightAng) + dy * Math.sin(lightAng) + z * 0.9);
           const shade = 0.18 + lighting * 0.95;
-          cr = cr * shade;
-          cg = cg * shade;
-          cb = cb * shade;
-
-          data[i]     = Math.max(0, Math.min(255, cr | 0));
-          data[i + 1] = Math.max(0, Math.min(255, cg | 0));
-          data[i + 2] = Math.max(0, Math.min(255, cb | 0));
+          const cr = c[0] * shade, cg = c[1] * shade, cb = c[2] * shade;
+          data[i]     = cr < 0 ? 0 : cr > 255 ? 255 : cr | 0;
+          data[i + 1] = cg < 0 ? 0 : cg > 255 ? 255 : cg | 0;
+          data[i + 2] = cb < 0 ? 0 : cb > 255 ? 255 : cb | 0;
           data[i + 3] = 255;
         }
       }
@@ -3744,6 +4403,78 @@
       // Relativistic Doppler colour tint. cosTvel = (line-of-sight · v̂) so a
       // body behind the velocity vector redshifts even if it's centred on
       // screen, regardless of where the camera is facing.
+      // GL body draws are QUEUED, not immediate. The star-dot batch flushes
+      // after this loop, so a body drawn mid-loop would end up underneath
+      // the dots - background stars were shining through planets. The queue
+      // preserves the drawList's far-to-near painter order and runs after
+      // the dots are down.
+      const glBodyQueue = [];
+      // Rotate a world vector into the impostor's view space: x right, y DOWN
+      // to match v_q's screen convention, z forward into the screen.
+      const _vL = [0, 0, 0], _vX = [0, 0, 0], _vY = [0, 0, 0], _vZ = [0, 0, 0];
+      function toView(v, out) {
+        out[0] =  v[0] * rx + v[1] * ry + v[2] * rz;
+        out[1] = -(v[0] * ux + v[1] * uy + v[2] * uz);
+        out[2] =  v[0] * fx + v[1] * fy + v[2] * fz;
+        return out;
+      }
+      // Hand one planet to the GL impostor. Returns true when it drew, so the
+      // caller can fall through to the 2d tiers when WebGL is unavailable.
+      function drawPlanetGL(obj, proj, radPx, depthV, cosTvel) {
+        const pf = planetFrame(obj);
+        const key = objHash(obj);
+        const L = toView(pf.L, _vL), BY = toView(pf.ax, _vY);
+        const BX = toView(pf.bx, _vX), BZ = toView(pf.bz, _vZ);
+        // Doppler as a multiply, same intent as applyDopplerTint on the 2d path.
+        let tr = 1, tg = 1, tb = 1;
+        if (beta > 0.02) {
+          const gam = 1 / Math.sqrt(1 - beta * beta);
+          const D = gam * (1 + beta * cosTvel);
+          const logD = Math.log(D);
+          if (Math.abs(logD) > 0.03) {
+            const ta = Math.min(0.75, Math.abs(logD) * 1.2);
+            const cr2 = D > 1 ?  90 / 255 : 1;
+            const cg2 = D > 1 ? 150 / 255 : 130 / 255;
+            const cb2 = D > 1 ? 1 : 60 / 255;
+            tr = 1 + (cr2 - 1) * ta; tg = 1 + (cg2 - 1) * ta; tb = 1 + (cb2 - 1) * ta;
+          }
+        }
+        // Per-kind material mix. Each world type gets its own balance of
+        // gloss, cloud cover, relief and air - a rocky world should be dry and
+        // rough, an ocean world glossy under broken cloud, a gas giant all
+        // atmosphere and no ground.
+        const K = obj.kind || 'rocky';
+        let warp = 0.012, relief = 0.9, spec = 0.05, cloud = 0.06, emis = 0, atmosK = 0.16;
+        if (K === 'ocean')          { warp = 0.016; relief = 0.5; spec = 1.0;  cloud = 0.55; atmosK = 0.95; }
+        else if (K === 'gas_giant') { warp = 0.008; relief = 0.2; spec = 0.0;  cloud = 0.12; atmosK = 0.85; }
+        else if (K === 'ice_giant') { warp = 0.008; relief = 0.2; spec = 0.18; cloud = 0.16; atmosK = 0.75; }
+        else if (K === 'iceworld')  { warp = 0.013; relief = 0.7; spec = 0.55; cloud = 0.12; atmosK = 0.22; }
+        else if (K === 'lava')      { warp = 0.014; relief = 0.9; spec = 0.15; cloud = 0.10; emis = 0.85; atmosK = 0.30; }
+        else if (K === 'shrouded')  { warp = 0.010; relief = 0.3; spec = 0.0;  cloud = 0.92; atmosK = 1.0; }
+        const _opts = ({
+          key, makeCanvas: () => buildPlanetMap(obj, key),
+          px: proj.px, py: proj.py, rpx: radPx,
+          lx: L[0], ly: L[1], lz: L[2],
+          bxx: BX[0], bxy: BX[1], bxz: BX[2],
+          byx: BY[0], byy: BY[1], byz: BY[2],
+          bzx: BZ[0], bzy: BZ[1], bzz: BZ[2],
+          spin: tAnimSec * pf.rate,
+          // A ring sits in the equatorial plane, so its normal IS the spin
+          // axis - the two can never disagree.
+          ring: obj.hasRing ? 1 : 0,
+          rnx: BY[0], rny: BY[1], rnz: BY[2],
+          tr, tg, tb,
+          atmos: atmosK,
+          t: tAnimSec, seed: (key & 0xffff) / 811.0,
+          warp, relief, spec, cloud, emis,
+          ar: Math.min(255, obj.cr + 80) / 255,
+          ag: Math.min(255, obj.cg + 80) / 255,
+          ab: Math.min(255, obj.cb + 80) / 255,
+          fade: Math.min(1, 0.4 + depthV),
+        });
+        glBodyQueue.push(() => starGL.drawPlanet(_opts));
+        return true;
+      }
       function applyDopplerTint(px, py, radius, cosTvel) {
         if (beta <= 0.02 || radius < 1) return;
         const gamma = 1 / Math.sqrt(1 - beta * beta);
@@ -3934,6 +4665,12 @@
             grad.addColorStop(1, `rgba(${(obj.cr * 0.5) | 0},${(obj.cg * 0.5) | 0},${(obj.cb * 0.5) | 0},${visAlpha.toFixed(2)})`);
             ctx.fillStyle = grad;
             ctx.beginPath(); ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2); ctx.fill();
+          } else if (starGL && starGL.hasPlanets()
+                     && drawPlanetGL(obj, proj, rad, depth, cosTvel)) {
+            // Drawn as a lit sphere on the GL layer: real surface normal,
+            // world-locked light and spin axis, ring raytraced against the
+            // body so the far half is occluded by depth rather than by paint
+            // order. Everything below is the no-WebGL fallback.
           } else {
             // ===== ring, far half =====
             // A ring only reads as 3D if the planet occludes the half that
@@ -4050,6 +4787,20 @@
         } else if (_item.type === 'nebula') {
           const rad = Math.min(4000, obj.physRadius / 1e15 * proj.k / gammaTime);
           if (rad < 8) continue;
+          if (starGL && starGL.hasNebulae()) {
+            const h = objHash(obj);
+            // Secondary hue: rotate the channels for filament colour.
+            const _nb = {
+              px: proj.px, py: proj.py, rpx: rad,
+              r: obj.cr / 255, g: obj.cg / 255, b: obj.cb / 255,
+              r2: obj.cg / 255, g2: obj.cb / 255, b2: Math.min(1, obj.cr / 255 + 0.2),
+              seed: (h & 0xffff) / 997.0,
+              t: tAnimSec,
+              fade: Math.min(1, 0.35 + depth),
+            };
+            glBodyQueue.push(() => starGL.drawNebula(_nb));
+            continue;
+          }
           ctx.globalCompositeOperation = 'lighter';
           const grad = ctx.createRadialGradient(proj.px, proj.py, 0, proj.px, proj.py, rad);
           grad.addColorStop(0,   `rgba(${obj.cr},${obj.cg},${obj.cb},0.22)`);
@@ -4105,6 +4856,22 @@
         } else if (_item.type === 'blackhole') {
           const rEH = Math.min(800, obj.physRadius / 1e15 * proj.k / gammaTime);
           if (rEH < 2) continue;
+          if (starGL && starGL.hasBlackHoles()) {
+            // Horizon, photon ring, disc and jets on the GL layer. The disc
+            // is a real plane raytraced against the horizon, so it survives
+            // being viewed edge-on - the 2d version drew a fixed pair of
+            // ellipse halves and could only ever be seen from one attitude.
+            const pf = planetFrame(obj);
+            const AX = toView(pf.ax, _vY);
+            const _bh = {
+              px: proj.px, py: proj.py, rpx: rEH,
+              rnx: AX[0], rny: AX[1], rnz: AX[2],
+              t: tAnimSec, rate: 0.4 + pf.rate * 8,
+              fade: Math.min(1, 0.45 + depth),
+            };
+            glBodyQueue.push(() => starGL.drawBlackHole(_bh));
+            continue;
+          }
           const rHalo = rEH * 6;
           const halo = ctx.createRadialGradient(proj.px, proj.py, rEH * 0.5, proj.px, proj.py, rHalo);
           halo.addColorStop(0,   'rgba(255,180,90,0.5)');
@@ -4186,6 +4953,10 @@
       if (starGL) {
         starGL.flush(dark, DOT_GLOW_SCALE, STAR_HALO_ALPHA);
         starGL.flushBodies(tAnimSec);
+        // Queued planet/black-hole/nebula draws, still in painter order.
+        // After the dots so bodies occlude the background field, before the
+        // interior wash so a transit still covers everything.
+        for (let qi = 0; qi < glBodyQueue.length; qi++) glBodyQueue[qi]();
         // Interior wash — INSIDE the surface only (1.02R → 0.88R). This is a
         // fullscreen overlay, so any fade band reaching outside the star hazes
         // the entire view, sky included, while the star is still just a disc
