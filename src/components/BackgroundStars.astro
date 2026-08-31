@@ -924,6 +924,69 @@
         }
       }
 
+      // ===== NEBULA program =====
+      // Volumetric-looking cloud from layered fbm inside a soft spherical
+      // falloff, drifting slowly. Replaces the 2d stack of radial gradients,
+      // sub-blobs and stroked wisps with actual structure: bright cores,
+      // filaments and dark absorption lanes from the same noise field, so it
+      // survives being flown toward instead of dissolving into circles.
+      const NFS = `
+        ${PRECISION_GLSL}
+        varying vec2 v_q;
+        uniform vec3 u_col;      // base colour 0..1
+        uniform vec3 u_col2;     // hue-shifted secondary
+        uniform float u_seed;
+        uniform float u_t;
+        uniform float u_fade;
+        ${NOISE_GLSL}
+        void main() {
+          float r = length(v_q);
+          if (r >= 1.0) discard;
+          // Soft spherical shell: full in the core, feathering to nothing.
+          float shell = smoothstep(1.0, 0.25, r);
+          vec2 p = v_q * 3.0 + u_seed;
+          // Large structure drifts; fine filaments drift against it so the
+          // cloud shears instead of sliding as one sheet.
+          float big  = fbm(p + vec2(u_t * 0.010, -u_t * 0.007));
+          float fine = fbm(p * 3.1 - vec2(u_t * 0.016, u_t * 0.011) + 31.0);
+          // Absorption lanes: a third field carves darkness through the glow.
+          float lane = fbm(p * 1.7 + vec2(-u_t * 0.006, u_t * 0.009) - 17.0);
+          float dens = shell * max(0.0, big * 0.9 + fine * 0.55 - 0.42);
+          dens *= 0.45 + 0.55 * smoothstep(0.25, 0.6, lane);
+          if (dens < 0.003) discard;
+          // Colour: secondary hue in the fine filaments, base in the body.
+          vec3 col = mix(u_col, u_col2, clamp(fine * 1.2 - 0.2, 0.0, 1.0));
+          // Bright core knots where both fields align.
+          col += vec3(0.25) * smoothstep(0.85, 1.15, big + fine * 0.5) * shell;
+          float a = clamp(dens * 0.55, 0.0, 0.5) * u_fade;
+          gl_FragColor = vec4(col * a, a);   // premultiplied, reads additive-soft
+        }`;
+      const nfs = sh(gl.FRAGMENT_SHADER, NFS);
+      let nebProg = null, nloc = null, nquad = null;
+      if (pvs && nfs) {
+        nebProg = gl.createProgram();
+        gl.attachShader(nebProg, pvs); gl.attachShader(nebProg, nfs); gl.linkProgram(nebProg);
+        if (!gl.getProgramParameter(nebProg, gl.LINK_STATUS)) { console.warn('starGL nebula link:', gl.getProgramInfoLog(nebProg)); nebProg = null; }
+        else {
+          nloc = {
+            corner: gl.getAttribLocation(nebProg, 'a_corner'),
+            res: gl.getUniformLocation(nebProg, 'u_res'),
+            center: gl.getUniformLocation(nebProg, 'u_center'),
+            rpx: gl.getUniformLocation(nebProg, 'u_rpx'),
+            col: gl.getUniformLocation(nebProg, 'u_col'),
+            col2: gl.getUniformLocation(nebProg, 'u_col2'),
+            seed: gl.getUniformLocation(nebProg, 'u_seed'),
+            t: gl.getUniformLocation(nebProg, 'u_t'),
+            fade: gl.getUniformLocation(nebProg, 'u_fade'),
+          };
+          nquad = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, nquad);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -1, -1,  1, -1,  -1, 1,   -1, 1,  1, -1,  1, 1,
+          ]), gl.STATIC_DRAW);
+        }
+      }
+
       let cssW = 0, cssH = 0, cssDpr = 1;
       return {
         resize(w, h, dprV) {
@@ -943,6 +1006,25 @@
         },
         hasPlanets() { return !!planProg; },
         hasBlackHoles() { return !!bhProg; },
+        hasNebulae() { return !!nebProg; },
+        drawNebula(o) {
+          if (!nebProg) return;
+          gl.useProgram(nebProg);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+          gl.uniform2f(nloc.res, cssW, cssH);
+          gl.uniform2f(nloc.center, o.px, o.py);
+          gl.uniform1f(nloc.rpx, o.rpx);
+          gl.uniform3f(nloc.col, o.r, o.g, o.b);
+          gl.uniform3f(nloc.col2, o.r2, o.g2, o.b2);
+          gl.uniform1f(nloc.seed, o.seed);
+          gl.uniform1f(nloc.t, o.t);
+          gl.uniform1f(nloc.fade, o.fade);
+          gl.bindBuffer(gl.ARRAY_BUFFER, nquad);
+          gl.enableVertexAttribArray(nloc.corner);
+          gl.vertexAttribPointer(nloc.corner, 2, gl.FLOAT, false, 0, 0);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        },
         drawBlackHole(o) {
           if (!bhProg) return;
           gl.useProgram(bhProg);
@@ -4522,6 +4604,12 @@
       // Relativistic Doppler colour tint. cosTvel = (line-of-sight · v̂) so a
       // body behind the velocity vector redshifts even if it's centred on
       // screen, regardless of where the camera is facing.
+      // GL body draws are QUEUED, not immediate. The star-dot batch flushes
+      // after this loop, so a body drawn mid-loop would end up underneath
+      // the dots - background stars were shining through planets. The queue
+      // preserves the drawList's far-to-near painter order and runs after
+      // the dots are down.
+      const glBodyQueue = [];
       // Rotate a world vector into the impostor's view space: x right, y DOWN
       // to match v_q's screen convention, z forward into the screen.
       const _vL = [0, 0, 0], _vX = [0, 0, 0], _vY = [0, 0, 0], _vZ = [0, 0, 0];
@@ -4554,7 +4642,7 @@
         }
         const hasAtmos = obj.kind === 'ocean' || obj.kind === 'gas_giant'
                       || obj.kind === 'ice_giant' || obj.kind === 'shrouded';
-        starGL.drawPlanet({
+        const _opts = ({
           key, makeCanvas: () => buildPlanetMap(obj, key),
           px: proj.px, py: proj.py, rpx: radPx,
           lx: L[0], ly: L[1], lz: L[2],
@@ -4573,6 +4661,7 @@
           ab: Math.min(255, obj.cb + 80) / 255,
           fade: Math.min(1, 0.4 + depthV),
         });
+        glBodyQueue.push(() => starGL.drawPlanet(_opts));
         return true;
       }
       function applyDopplerTint(px, py, radius, cosTvel) {
@@ -4887,6 +4976,20 @@
         } else if (_item.type === 'nebula') {
           const rad = Math.min(4000, obj.physRadius / 1e15 * proj.k / gammaTime);
           if (rad < 8) continue;
+          if (starGL && starGL.hasNebulae()) {
+            const h = objHash(obj);
+            // Secondary hue: rotate the channels for filament colour.
+            const _nb = {
+              px: proj.px, py: proj.py, rpx: rad,
+              r: obj.cr / 255, g: obj.cg / 255, b: obj.cb / 255,
+              r2: obj.cg / 255, g2: obj.cb / 255, b2: Math.min(1, obj.cr / 255 + 0.2),
+              seed: (h & 0xffff) / 997.0,
+              t: tAnimSec,
+              fade: Math.min(1, 0.35 + depth),
+            };
+            glBodyQueue.push(() => starGL.drawNebula(_nb));
+            continue;
+          }
           ctx.globalCompositeOperation = 'lighter';
           const grad = ctx.createRadialGradient(proj.px, proj.py, 0, proj.px, proj.py, rad);
           grad.addColorStop(0,   `rgba(${obj.cr},${obj.cg},${obj.cb},0.22)`);
@@ -4949,12 +5052,13 @@
             // ellipse halves and could only ever be seen from one attitude.
             const pf = planetFrame(obj);
             const AX = toView(pf.ax, _vY);
-            starGL.drawBlackHole({
+            const _bh = {
               px: proj.px, py: proj.py, rpx: rEH,
               rnx: AX[0], rny: AX[1], rnz: AX[2],
               t: tAnimSec, rate: 0.4 + pf.rate * 8,
               fade: Math.min(1, 0.45 + depth),
-            });
+            };
+            glBodyQueue.push(() => starGL.drawBlackHole(_bh));
             continue;
           }
           const rHalo = rEH * 6;
@@ -5038,6 +5142,10 @@
       if (starGL) {
         starGL.flush(dark, DOT_GLOW_SCALE, STAR_HALO_ALPHA);
         starGL.flushBodies(tAnimSec);
+        // Queued planet/black-hole/nebula draws, still in painter order.
+        // After the dots so bodies occlude the background field, before the
+        // interior wash so a transit still covers everything.
+        for (let qi = 0; qi < glBodyQueue.length; qi++) glBodyQueue[qi]();
         // Interior wash — INSIDE the surface only (1.02R → 0.88R). This is a
         // fullscreen overlay, so any fade band reaching outside the star hazes
         // the entire view, sky included, while the star is still just a disc
