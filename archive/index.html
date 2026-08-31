@@ -451,13 +451,21 @@
             // Cloud deck: its own layer, turning slightly faster than the
             // surface, casting a soft shadow down onto it.
             if (u_cloud > 0.0) {
-              vec2 cp = vec2((lon + u_t * 0.004) * clat, lat) * 3.2 + 57.0;
-              float cf = fbm(cp) * 0.65 + fbm(cp * 2.7) * 0.35;
-              float cover = smoothstep(0.52, 0.78, cf) * u_cloud;
+              // The deck turns faster than the ground. Rotating the surface
+              // point about the spin axis is what makes that a real rotation
+              // rather than a texture slide - and it keeps the cloud domain on
+              // the same singularity-free footing as everything else here.
+              float cphi = u_t * 0.02;
+              float cc = cos(cphi), ss = sin(cphi);
+              vec3 Pc = vec3(Ps.x * cc + Ps.z * ss, Ps.y, -Ps.x * ss + Ps.z * cc);
+              vec2 ca = vec2(Pc.x, Pc.y) * 2.6 + 57.0;
+              vec2 cb2 = vec2(Pc.z, Pc.y) * 2.6 + 91.0;
+              float cf = fbm(ca) * 0.5 + fbm(cb2) * 0.5;
+              float cover = smoothstep(0.50, 0.76, cf) * u_cloud;
               // Shadow: sample the deck again, offset toward the light.
-              vec2 cs = cp + vec2(u_light.x, -u_light.y) * 0.22;
-              float sf = fbm(cs) * 0.65 + fbm(cs * 2.7) * 0.35;
-              surf *= 1.0 - 0.34 * smoothstep(0.52, 0.78, sf) * u_cloud;
+              vec2 sa = ca + vec2(u_light.x, -u_light.y) * 0.30;
+              float sf = fbm(sa) * 0.5 + fbm(cb2) * 0.5;
+              surf *= 1.0 - 0.34 * smoothstep(0.50, 0.76, sf) * u_cloud;
               surf = mix(surf, vec3(1.0, 0.99, 0.97) * (0.06 + 0.96 * term), cover);
             }
 
