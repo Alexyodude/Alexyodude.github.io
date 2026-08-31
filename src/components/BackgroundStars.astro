@@ -598,6 +598,203 @@
         }
       }
 
+      // ===== PLANET program =====
+      // A lit sphere plus a raytraced ring, both from one impostor quad.
+      //
+      // The ring is not a decal and not a pair of arcs: the fragment shader
+      // intersects the view ray with the ring plane and compares that hit
+      // against the sphere's front surface, so the half passing behind the
+      // body is occluded by depth rather than by draw order. Both shadows
+      // then fall out of the same geometry - the planet's shadow thrown
+      // across the ring, and the ring's shadow banding the planet - instead
+      // of being painted on as gradients that had to be kept consistent with
+      // each other by hand.
+      //
+      // Light direction, ring normal and spin axis all arrive as VIEW-space
+      // uniforms, computed per frame in JS from seeded WORLD-space vectors.
+      // World-locked is the whole point: orbit the planet and the terminator
+      // stays put on the surface, which is exactly what the old baked-in
+      // view-space shading could never do.
+      const PVS = `
+        attribute vec2 a_corner;
+        uniform vec2 u_res;
+        uniform vec2 u_center;
+        uniform float u_rpx;
+        varying vec2 v_q;
+        void main() {
+          v_q = a_corner;
+          vec2 px = u_center + a_corner * u_rpx;
+          vec2 clip = (px / u_res) * 2.0 - 1.0;
+          gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+        }`;
+      const PFS = `
+        ${PRECISION_GLSL}
+        varying vec2 v_q;
+        uniform sampler2D u_map;     // equirectangular albedo
+        uniform vec3 u_light;        // view space, planet -> light
+        uniform vec3 u_bx;           // planet basis in view space
+        uniform vec3 u_by;           // spin axis
+        uniform vec3 u_bz;
+        uniform float u_spin;        // longitude offset, in turns
+        uniform float u_ring;        // 0 = none, else ring alpha scale
+        uniform vec3 u_rn;           // ring plane normal, view space
+        uniform vec3 u_tint;         // Doppler multiply
+        uniform float u_atmos;       // 0..1 atmosphere strength
+        uniform vec3 u_acol;         // atmosphere colour
+        uniform float u_fade;        // global alpha
+
+        const float RIN = 1.24;
+        const float ROUT = 2.08;
+
+        // Radial density profile of the ring: one major division, two lesser
+        // gaps, ringlet ripple, soft inner and outer edges. Same curve the
+        // canvas version used, so the look carries across unchanged.
+        float ringDens(float t) {
+          float d = 1.0;
+          d *= 1.0 - 0.94 * exp(-pow((t - 0.47) / 0.050, 2.0));
+          d *= 1.0 - 0.55 * exp(-pow((t - 0.79) / 0.028, 2.0));
+          d *= 1.0 - 0.40 * exp(-pow((t - 0.14) / 0.045, 2.0));
+          d *= 0.80 + 0.20 * sin(t * 47.0);
+          d *= 0.35 + 0.65 * min(1.0, t / 0.16);
+          d *= 1.0 - 0.55 * max(0.0, (t - 0.86) / 0.14);
+          return clamp(d, 0.0, 1.0);
+        }
+
+        void main() {
+          float d2 = dot(v_q, v_q);
+          bool onSphere = d2 < 1.0;
+          float nz = onSphere ? sqrt(1.0 - d2) : 0.0;
+          // The front hemisphere faces the camera, which sits at -z.
+          vec3 N = vec3(v_q.x, v_q.y, -nz);
+          float zSphere = -nz;               // depth of the front surface
+
+          vec3 surf = vec3(0.0);
+          float surfA = 0.0;
+          float ndl = 0.0;
+          if (onSphere) {
+            // Rotate into the planet's own frame, so longitude and latitude
+            // live on the body instead of on the screen.
+            float px = dot(N, u_bx), py = dot(N, u_by), pz = dot(N, u_bz);
+            float lat = asin(clamp(py, -1.0, 1.0)) / 1.5707963;
+            float lon = atan(px, pz) / 3.1415927 + u_spin;
+            vec2 uv = vec2(fract(lon * 0.5 + 0.5), clamp(lat * 0.5 + 0.5, 0.002, 0.998));
+            vec3 alb = texture2D(u_map, uv).rgb;
+            // Lambert with a softened terminator, plus enough ambient that
+            // the night side reads as a silhouette rather than a hole.
+            ndl = dot(N, u_light);
+            float diff = smoothstep(-0.12, 0.35, ndl);
+            float shade = 0.12 + 0.98 * diff;
+            // Ring shadow cast onto the planet: step from this surface point
+            // toward the light and see whether it crosses the annulus.
+            if (u_ring > 0.0 && abs(dot(u_rn, u_light)) > 1e-3) {
+              float sT = -dot(u_rn, N) / dot(u_rn, u_light);
+              if (sT > 0.0) {
+                float cr = length(N + sT * u_light);
+                if (cr > RIN && cr < ROUT) {
+                  shade *= 1.0 - 0.72 * ringDens((cr - RIN) / (ROUT - RIN)) * u_ring;
+                }
+              }
+            }
+            surf = alb * shade;
+            surfA = 1.0;
+            // Atmospheric limb scattering, strongest where the limb is lit.
+            if (u_atmos > 0.0) {
+              float rim = pow(1.0 - nz, 3.0);
+              surf += u_acol * rim * u_atmos * (0.25 + 0.75 * max(0.0, ndl));
+            }
+          }
+
+          vec3 col = surf;
+          float a = surfA;
+
+          if (u_ring > 0.0 && abs(u_rn.z) > 1e-3) {
+            // Where does this pixel's view ray pierce the ring plane?
+            float t = -(u_rn.x * v_q.x + u_rn.y * v_q.y) / u_rn.z;
+            vec3 P = vec3(v_q.x, v_q.y, t);
+            float rr = length(P);
+            if (rr > RIN && rr < ROUT) {
+              // Hidden when the crossing lies behind the body.
+              bool blocked = onSphere && t > zSphere;
+              if (!blocked) {
+                float dens = ringDens((rr - RIN) / (ROUT - RIN));
+                // The planet's own shadow falling across the ring: the ray
+                // from P toward the light passes within one radius of centre,
+                // on the far side from the light.
+                float pl = dot(P, u_light);
+                float perp2 = dot(P, P) - pl * pl;
+                if (pl < 0.0 && perp2 < 1.0) dens *= 0.20;
+                // Icy and slightly blue-grey - ring particles are not the body.
+                vec3 rcol = vec3(0.82, 0.80, 0.75) * (0.35 + 0.65 * abs(dot(u_rn, u_light)));
+                float ra = clamp(dens * 0.92 * u_ring, 0.0, 1.0);
+                col = col * (1.0 - ra) + rcol * ra;
+                a = a + ra * (1.0 - a);
+              }
+            }
+          }
+
+          if (a <= 0.001) discard;
+          col *= u_tint;
+          a *= u_fade;
+          gl_FragColor = vec4(col * a, a);   // premultiplied
+        }`;
+      const pvs = sh(gl.VERTEX_SHADER, PVS), pfs = sh(gl.FRAGMENT_SHADER, PFS);
+      let planProg = null, ploc = null, pquad = null;
+      const PLANET_QUAD_R = 2.4;   // room for the ring outer edge + atmosphere
+      if (pvs && pfs) {
+        planProg = gl.createProgram();
+        gl.attachShader(planProg, pvs); gl.attachShader(planProg, pfs); gl.linkProgram(planProg);
+        if (!gl.getProgramParameter(planProg, gl.LINK_STATUS)) { console.warn('starGL planet link:', gl.getProgramInfoLog(planProg)); planProg = null; }
+        else {
+          ploc = {
+            corner: gl.getAttribLocation(planProg, 'a_corner'),
+            res: gl.getUniformLocation(planProg, 'u_res'),
+            center: gl.getUniformLocation(planProg, 'u_center'),
+            rpx: gl.getUniformLocation(planProg, 'u_rpx'),
+            map: gl.getUniformLocation(planProg, 'u_map'),
+            light: gl.getUniformLocation(planProg, 'u_light'),
+            bx: gl.getUniformLocation(planProg, 'u_bx'),
+            by: gl.getUniformLocation(planProg, 'u_by'),
+            bz: gl.getUniformLocation(planProg, 'u_bz'),
+            spin: gl.getUniformLocation(planProg, 'u_spin'),
+            ring: gl.getUniformLocation(planProg, 'u_ring'),
+            rn: gl.getUniformLocation(planProg, 'u_rn'),
+            tint: gl.getUniformLocation(planProg, 'u_tint'),
+            atmos: gl.getUniformLocation(planProg, 'u_atmos'),
+            acol: gl.getUniformLocation(planProg, 'u_acol'),
+            fade: gl.getUniformLocation(planProg, 'u_fade'),
+          };
+          const RQ = PLANET_QUAD_R;
+          pquad = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, pquad);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -RQ, -RQ,  RQ, -RQ,  -RQ, RQ,   -RQ, RQ,  RQ, -RQ,  RQ, RQ,
+          ]), gl.STATIC_DRAW);
+        }
+      }
+      // One GL texture per planet, keyed by object hash, evicted oldest-first
+      // like the canvas cache it replaces.
+      const mapTex = new Map();
+      const MAP_TEX_LIMIT = 24;
+      function planetMapTexture(key, makeCanvas) {
+        let t = mapTex.get(key);
+        if (t) return t;
+        t = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, makeCanvas());
+        // REPEAT on longitude so the seam closes as the body spins.
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        if (mapTex.size >= MAP_TEX_LIMIT) {
+          const oldest = mapTex.keys().next().value;
+          gl.deleteTexture(mapTex.get(oldest));
+          mapTex.delete(oldest);
+        }
+        mapTex.set(key, t);
+        return t;
+      }
+
       let cssW = 0, cssH = 0, cssDpr = 1;
       return {
         resize(w, h, dprV) {
@@ -606,7 +803,48 @@
           gl.viewport(0, 0, glCanvas.width, glCanvas.height);
           cssW = w; cssH = h; cssDpr = dprV;
         },
-        begin() { n = 0; bn = 0; },
+        // Clearing belongs HERE, at frame start, not in flush(). Bodies that
+        // draw immediately during the draw loop (planets) reach the buffer
+        // before the batched star flush runs, so clearing inside flush wiped
+        // them every frame - the planet was being rendered and then erased.
+        begin() {
+          n = 0; bn = 0;
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+        },
+        hasPlanets() { return !!planProg; },
+        // Immediate per-object draw: every planet binds its own albedo map, so
+        // there is nothing to batch. Large planets are rare - the small ones
+        // go down the point-sprite path - so the call count stays in single
+        // figures.
+        drawPlanet(o) {
+          if (!planProg) return;
+          const tex = planetMapTexture(o.key, o.makeCanvas);
+          gl.useProgram(planProg);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+          gl.uniform2f(ploc.res, cssW, cssH);
+          gl.uniform2f(ploc.center, o.px, o.py);
+          gl.uniform1f(ploc.rpx, o.rpx);
+          gl.uniform3f(ploc.light, o.lx, o.ly, o.lz);
+          gl.uniform3f(ploc.bx, o.bxx, o.bxy, o.bxz);
+          gl.uniform3f(ploc.by, o.byx, o.byy, o.byz);
+          gl.uniform3f(ploc.bz, o.bzx, o.bzy, o.bzz);
+          gl.uniform1f(ploc.spin, o.spin);
+          gl.uniform1f(ploc.ring, o.ring);
+          gl.uniform3f(ploc.rn, o.rnx, o.rny, o.rnz);
+          gl.uniform3f(ploc.tint, o.tr, o.tg, o.tb);
+          gl.uniform1f(ploc.atmos, o.atmos);
+          gl.uniform3f(ploc.acol, o.ar, o.ag, o.ab);
+          gl.uniform1f(ploc.fade, o.fade);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          gl.uniform1i(ploc.map, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, pquad);
+          gl.enableVertexAttribArray(ploc.corner);
+          gl.vertexAttribPointer(ploc.corner, 2, gl.FLOAT, false, 0, 0);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        },
         // dark mode: near-white points, additive — overlapping glows sum like
         // light — overlapping glows sum the way real light does.
         push(px, py, size, r, g, b, a) {
@@ -620,9 +858,7 @@
           n++;
         },
         flush(dark, glowScale, haloAlpha) {
-          gl.clearColor(0, 0, 0, 0);
-          gl.clear(gl.COLOR_BUFFER_BIT);
-          if (!n) return;
+          if (!n) return;   // clear happens in begin(), see note there
           gl.useProgram(prog);
           gl.uniform2f(loc.res, cssW, cssH);
           gl.uniform1f(loc.dpr, cssDpr);
@@ -2646,6 +2882,39 @@
     const planetTexCache = new Map();
     const PLANET_TEX_LIMIT = 120;
     const PLANET_TEX_SIZE = 256;
+    // Equirectangular albedo map for the GL impostor (2:1, power-of-two).
+    const PLANET_MAP_W = 512, PLANET_MAP_H = 256;
+    // World-locked frame for a planet: spin axis, an equatorial reference
+    // pair, a light direction and a rotation rate, all seeded from the object
+    // hash and computed once. These live in WORLD space and are rotated into
+    // view space per frame. That indirection is the entire reason the
+    // terminator now stays put on the surface while the camera moves - the
+    // old baked texture carried its lighting in view space, so the lit side
+    // followed the screen instead of the sun.
+    function planetFrame(obj) {
+      if (obj._pf) return obj._pf;
+      const r = mulberry32(objHash(obj) + 0x5bf0);
+      const pick = () => {
+        const z = r() * 2 - 1, th = r() * Math.PI * 2;
+        const sn = Math.sqrt(Math.max(0, 1 - z * z));
+        return [sn * Math.cos(th), sn * Math.sin(th), z];
+      };
+      const ax = pick();                       // spin axis
+      // Any vector not parallel to the axis gives an equatorial reference.
+      const t0 = Math.abs(ax[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+      let bx = [t0[1] * ax[2] - t0[2] * ax[1],
+                t0[2] * ax[0] - t0[0] * ax[2],
+                t0[0] * ax[1] - t0[1] * ax[0]];
+      const bl = Math.hypot(bx[0], bx[1], bx[2]) || 1;
+      bx = [bx[0] / bl, bx[1] / bl, bx[2] / bl];
+      const bz = [ax[1] * bx[2] - ax[2] * bx[1],
+                  ax[2] * bx[0] - ax[0] * bx[2],
+                  ax[0] * bx[1] - ax[1] * bx[0]];
+      // Turns per second. Slow enough to read as rotation rather than spin.
+      obj._pf = { ax, bx, bz, L: pick(), rate: 0.008 + r() * 0.03 };
+      return obj._pf;
+    }
+
     function getPlanetTexture(obj) {
       const key = objHash(obj);
       let tex = planetTexCache.get(key);
@@ -2659,6 +2928,125 @@
       planetTexCache.set(key, tex);
       return tex;
     }
+    // Per-kind surface albedo at a point on the sphere, in the same
+    // normalised coordinates the old disc baker used: lon and lat both -1..1.
+    // Extracted so the equirectangular map (GL path) and the flat disc
+    // (no-WebGL fallback) draw identical art from one source.
+    //
+    // Albedo ONLY - no shading. The old baker multiplied a VIEW-SPACE lighting
+    // term into these bytes, which is exactly why a planet could never rotate:
+    // the terminator was welded to screen position instead of to the surface,
+    // so the texture was a decal frozen at one longitude. Lighting now happens
+    // in the shader, from the real surface normal.
+    const _alb = [0, 0, 0];
+    function planetAlbedo(obj, seed, kind, lon, lat, stormX, stormY) {
+      let cr, cg, cb;
+        if (kind === 'gas_giant') {
+          const turb = fbm2(lon * 1.5, lat * 6, seed, 4);
+          const bandV = 0.5 + 0.5 * Math.sin(lat * 8 + turb * 2);
+          const k = 0.65 + bandV * 0.6;
+          cr = obj.cr * k + (turb - 0.5) * 60;
+          cg = obj.cg * k + (turb - 0.5) * 40;
+          cb = obj.cb * k + (turb - 0.5) * 20;
+          const sd = (lon - stormX) * (lon - stormX) * 0.5 + (lat - stormY) * (lat - stormY) * 1.4;
+          if (sd < 0.018) {
+            const tS = 1 - Math.sqrt(sd / 0.018);
+            cr = cr * (1 - tS) + 215 * tS;
+            cg = cg * (1 - tS) + 80 * tS;
+            cb = cb * (1 - tS) + 55 * tS;
+          }
+        } else if (kind === 'ice_giant') {
+          const bandN = fbm2(lon * 1.2, lat * 4, seed, 3);
+          const k = 0.85 + bandN * 0.3;
+          cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
+        } else if (kind === 'ocean') {
+          const n = fbm2(lon * 3 + 50, lat * 3, seed, 5);
+          if (n > 0.52) {
+            const t = Math.min(1, (n - 0.52) / 0.35);
+            cr = 95 + t * 70; cg = 120 + t * 55; cb = 60 + t * 30;
+          } else {
+            const d2 = (0.52 - n) / 0.52;
+            cr = 35 + d2 * 25; cg = 80 + d2 * 30; cb = 165 + d2 * 35;
+          }
+          const cn = fbm2(lon * 6 + 200, lat * 6, seed + 7777, 3);
+          if (cn > 0.6) {
+            const ca = (cn - 0.6) / 0.4 * 0.55;
+            cr = cr * (1 - ca) + 245 * ca;
+            cg = cg * (1 - ca) + 245 * ca;
+            cb = cb * (1 - ca) + 245 * ca;
+          }
+        } else if (kind === 'iceworld') {
+          cr = 215; cg = 228; cb = 245;
+          const cn = fbm2(lon * 3 + 12, lat * 3, seed, 4);
+          const lineN = fbm2(lon * 18 + 90, lat * 18, seed + 31, 2);
+          if (cn < 0.42) { cr -= 35; cg -= 28; cb -= 18; }
+          if (lineN > 0.78) { cr -= 90; cg -= 70; cb -= 30; }
+        } else if (kind === 'lava') {
+          const n = fbm2(lon * 4 + 5, lat * 4, seed, 5);
+          cr = 30; cg = 12; cb = 8;
+          if (n > 0.52) {
+            const t = Math.pow((n - 0.52) / 0.48, 1.3);
+            cr = 30 + t * 225;
+            cg = 12 + t * 175;
+            cb = 8 + t * 35;
+          }
+        } else if (kind === 'shrouded') {
+          const n = fbm2(lon * 2.5, lat * 2.5, seed, 3);
+          const k = 0.88 + n * 0.22;
+          cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
+        } else {
+          // rocky / desert — texture noise + crater pits
+          const n = fbm2(lon * 4 + 3, lat * 4, seed, 5);
+          const k = 0.65 + n * 0.5;
+          cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
+          const cn = fbm2(lon * 20 + 50, lat * 20, seed + 333, 2);
+          if (cn > 0.74) {
+            const t = (cn - 0.74) / 0.26;
+            cr *= 1 - t * 0.45;
+            cg *= 1 - t * 0.45;
+            cb *= 1 - t * 0.45;
+          }
+        }
+      _alb[0] = cr; _alb[1] = cg; _alb[2] = cb;
+      return _alb;
+    }
+
+    // Equirectangular albedo map: x spans longitude -1..1, y latitude -1..1.
+    // The GL impostor samples this with the axial spin added to longitude, so
+    // the surface turns under a fixed light. 2:1 because longitude covers
+    // twice the angular range of latitude. Power-of-two so longitude can wrap
+    // with gl.REPEAT.
+    function buildPlanetMap(obj, seed) {
+      const MW = PLANET_MAP_W, MH = PLANET_MAP_H;
+      const canvasT = document.createElement('canvas');
+      canvasT.width = MW; canvasT.height = MH;
+      const cx2 = canvasT.getContext('2d');
+      const id = cx2.createImageData(MW, MH);
+      const data = id.data;
+      const kind = obj.kind || 'rocky';
+      const stormX = ((seed & 0xff) / 255) * 1.4 - 0.7;
+      const stormY = (((seed >> 8) & 0xff) / 255) * 0.6 - 0.3;
+      for (let y = 0; y < MH; y++) {
+        const lat = (y / (MH - 1)) * 2 - 1;
+        for (let x = 0; x < MW; x++) {
+          // x = MW would land on +1, which is the same meridian as -1, so the
+          // divisor is MW rather than MW-1 and the seam closes under REPEAT.
+          const lon = (x / MW) * 2 - 1;
+          const c = planetAlbedo(obj, seed, kind, lon, lat, stormX, stormY);
+          const i = (y * MW + x) * 4;
+          data[i]     = c[0] < 0 ? 0 : c[0] > 255 ? 255 : c[0] | 0;
+          data[i + 1] = c[1] < 0 ? 0 : c[1] > 255 ? 255 : c[1] | 0;
+          data[i + 2] = c[2] < 0 ? 0 : c[2] > 255 ? 255 : c[2] | 0;
+          data[i + 3] = 255;
+        }
+      }
+      cx2.putImageData(id, 0, 0);
+      return canvasT;
+    }
+
+    // Flat pre-shaded disc. Only reached when WebGL is unavailable; the GL
+    // path uses buildPlanetMap above. Kept byte-identical in look to what
+    // shipped before, baked view-space lighting and all.
     function buildPlanetTexture(obj, seed) {
       const SIZE = PLANET_TEX_SIZE;
       const canvasT = document.createElement('canvas');
@@ -2670,10 +3058,8 @@
       const center = SIZE / 2;
       const radPx = center - 1;
       const kind = obj.kind || 'rocky';
-      // Pick a storm/feature location deterministically (used by gas giants)
       const stormX = ((seed & 0xff) / 255) * 1.4 - 0.7;
       const stormY = (((seed >> 8) & 0xff) / 255) * 0.6 - 0.3;
-
       for (let y = 0; y < SIZE; y++) {
         for (let x = 0; x < SIZE; x++) {
           const dx = (x - center) / radPx;
@@ -2682,92 +3068,16 @@
           const i = (y * SIZE + x) * 4;
           if (r2 >= 1) { data[i + 3] = 0; continue; }
           const z = Math.sqrt(1 - r2);
-          // Spherical mapping for surface coords
-          const lon = Math.atan2(dx, z) / Math.PI; // -1..1
-          const lat = Math.asin(Math.max(-1, Math.min(1, dy))) / (Math.PI / 2); // -1..1
-
-          let cr, cg, cb;
-
-          if (kind === 'gas_giant') {
-            const turb = fbm2(lon * 1.5, lat * 6, seed, 4);
-            const bandV = 0.5 + 0.5 * Math.sin(lat * 8 + turb * 2);
-            const k = 0.65 + bandV * 0.6;
-            cr = obj.cr * k + (turb - 0.5) * 60;
-            cg = obj.cg * k + (turb - 0.5) * 40;
-            cb = obj.cb * k + (turb - 0.5) * 20;
-            const sd = (dx - stormX) * (dx - stormX) * 0.5 + (dy - stormY) * (dy - stormY) * 1.4;
-            if (sd < 0.018) {
-              const tS = 1 - Math.sqrt(sd / 0.018);
-              cr = cr * (1 - tS) + 215 * tS;
-              cg = cg * (1 - tS) + 80 * tS;
-              cb = cb * (1 - tS) + 55 * tS;
-            }
-          } else if (kind === 'ice_giant') {
-            const bandN = fbm2(lon * 1.2, lat * 4, seed, 3);
-            const k = 0.85 + bandN * 0.3;
-            cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
-          } else if (kind === 'ocean') {
-            const n = fbm2(lon * 3 + 50, lat * 3, seed, 5);
-            if (n > 0.52) {
-              const t = Math.min(1, (n - 0.52) / 0.35);
-              cr = 95 + t * 70; cg = 120 + t * 55; cb = 60 + t * 30;
-            } else {
-              const d2 = (0.52 - n) / 0.52;
-              cr = 35 + d2 * 25; cg = 80 + d2 * 30; cb = 165 + d2 * 35;
-            }
-            const cn = fbm2(lon * 6 + 200, lat * 6, seed + 7777, 3);
-            if (cn > 0.6) {
-              const ca = (cn - 0.6) / 0.4 * 0.55;
-              cr = cr * (1 - ca) + 245 * ca;
-              cg = cg * (1 - ca) + 245 * ca;
-              cb = cb * (1 - ca) + 245 * ca;
-            }
-          } else if (kind === 'iceworld') {
-            cr = 215; cg = 228; cb = 245;
-            const cn = fbm2(lon * 3 + 12, lat * 3, seed, 4);
-            const lineN = fbm2(lon * 18 + 90, lat * 18, seed + 31, 2);
-            if (cn < 0.42) { cr -= 35; cg -= 28; cb -= 18; }
-            if (lineN > 0.78) { cr -= 90; cg -= 70; cb -= 30; }
-          } else if (kind === 'lava') {
-            const n = fbm2(dx * 4 + 5, dy * 4, seed, 5);
-            cr = 30; cg = 12; cb = 8;
-            if (n > 0.52) {
-              const t = Math.pow((n - 0.52) / 0.48, 1.3);
-              cr = 30 + t * 225;
-              cg = 12 + t * 175;
-              cb = 8 + t * 35;
-            }
-          } else if (kind === 'shrouded') {
-            const n = fbm2(lon * 2.5, lat * 2.5, seed, 3);
-            const k = 0.88 + n * 0.22;
-            cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
-          } else {
-            // rocky / desert — texture noise + crater pits
-            const n = fbm2(lon * 4 + 3, lat * 4, seed, 5);
-            const k = 0.65 + n * 0.5;
-            cr = obj.cr * k; cg = obj.cg * k; cb = obj.cb * k;
-            const cn = fbm2(lon * 20 + 50, lat * 20, seed + 333, 2);
-            if (cn > 0.74) {
-              const t = (cn - 0.74) / 0.26;
-              cr *= 1 - t * 0.45;
-              cg *= 1 - t * 0.45;
-              cb *= 1 - t * 0.45;
-            }
-          }
-
-          // Sphere shading: limb darkening — bright at center, darker at edge
-          const lightAng = -0.55; // light from upper-left
-          const lightX = Math.cos(lightAng);
-          const lightY = Math.sin(lightAng);
-          const lighting = Math.max(0, dx * lightX + dy * lightY + z * 0.9);
+          const lon = Math.atan2(dx, z) / Math.PI;
+          const lat = Math.asin(Math.max(-1, Math.min(1, dy))) / (Math.PI / 2);
+          const c = planetAlbedo(obj, seed, kind, lon, lat, stormX, stormY);
+          const lightAng = -0.55;
+          const lighting = Math.max(0, dx * Math.cos(lightAng) + dy * Math.sin(lightAng) + z * 0.9);
           const shade = 0.18 + lighting * 0.95;
-          cr = cr * shade;
-          cg = cg * shade;
-          cb = cb * shade;
-
-          data[i]     = Math.max(0, Math.min(255, cr | 0));
-          data[i + 1] = Math.max(0, Math.min(255, cg | 0));
-          data[i + 2] = Math.max(0, Math.min(255, cb | 0));
+          const cr = c[0] * shade, cg = c[1] * shade, cb = c[2] * shade;
+          data[i]     = cr < 0 ? 0 : cr > 255 ? 255 : cr | 0;
+          data[i + 1] = cg < 0 ? 0 : cg > 255 ? 255 : cg | 0;
+          data[i + 2] = cb < 0 ? 0 : cb > 255 ? 255 : cb | 0;
           data[i + 3] = 255;
         }
       }
@@ -4065,6 +4375,59 @@
       // Relativistic Doppler colour tint. cosTvel = (line-of-sight · v̂) so a
       // body behind the velocity vector redshifts even if it's centred on
       // screen, regardless of where the camera is facing.
+      // Rotate a world vector into the impostor's view space: x right, y DOWN
+      // to match v_q's screen convention, z forward into the screen.
+      const _vL = [0, 0, 0], _vX = [0, 0, 0], _vY = [0, 0, 0], _vZ = [0, 0, 0];
+      function toView(v, out) {
+        out[0] =  v[0] * rx + v[1] * ry + v[2] * rz;
+        out[1] = -(v[0] * ux + v[1] * uy + v[2] * uz);
+        out[2] =  v[0] * fx + v[1] * fy + v[2] * fz;
+        return out;
+      }
+      // Hand one planet to the GL impostor. Returns true when it drew, so the
+      // caller can fall through to the 2d tiers when WebGL is unavailable.
+      function drawPlanetGL(obj, proj, radPx, depthV, cosTvel) {
+        const pf = planetFrame(obj);
+        const key = objHash(obj);
+        const L = toView(pf.L, _vL), BY = toView(pf.ax, _vY);
+        const BX = toView(pf.bx, _vX), BZ = toView(pf.bz, _vZ);
+        // Doppler as a multiply, same intent as applyDopplerTint on the 2d path.
+        let tr = 1, tg = 1, tb = 1;
+        if (beta > 0.02) {
+          const gam = 1 / Math.sqrt(1 - beta * beta);
+          const D = gam * (1 + beta * cosTvel);
+          const logD = Math.log(D);
+          if (Math.abs(logD) > 0.03) {
+            const ta = Math.min(0.75, Math.abs(logD) * 1.2);
+            const cr2 = D > 1 ?  90 / 255 : 1;
+            const cg2 = D > 1 ? 150 / 255 : 130 / 255;
+            const cb2 = D > 1 ? 1 : 60 / 255;
+            tr = 1 + (cr2 - 1) * ta; tg = 1 + (cg2 - 1) * ta; tb = 1 + (cb2 - 1) * ta;
+          }
+        }
+        const hasAtmos = obj.kind === 'ocean' || obj.kind === 'gas_giant'
+                      || obj.kind === 'ice_giant' || obj.kind === 'shrouded';
+        starGL.drawPlanet({
+          key, makeCanvas: () => buildPlanetMap(obj, key),
+          px: proj.px, py: proj.py, rpx: radPx,
+          lx: L[0], ly: L[1], lz: L[2],
+          bxx: BX[0], bxy: BX[1], bxz: BX[2],
+          byx: BY[0], byy: BY[1], byz: BY[2],
+          bzx: BZ[0], bzy: BZ[1], bzz: BZ[2],
+          spin: tAnimSec * pf.rate,
+          // A ring sits in the equatorial plane, so its normal IS the spin
+          // axis - the two can never disagree.
+          ring: obj.hasRing ? 1 : 0,
+          rnx: BY[0], rny: BY[1], rnz: BY[2],
+          tr, tg, tb,
+          atmos: hasAtmos ? 0.55 : 0,
+          ar: Math.min(255, obj.cr + 80) / 255,
+          ag: Math.min(255, obj.cg + 80) / 255,
+          ab: Math.min(255, obj.cb + 80) / 255,
+          fade: Math.min(1, 0.4 + depthV),
+        });
+        return true;
+      }
       function applyDopplerTint(px, py, radius, cosTvel) {
         if (beta <= 0.02 || radius < 1) return;
         const gamma = 1 / Math.sqrt(1 - beta * beta);
@@ -4255,6 +4618,12 @@
             grad.addColorStop(1, `rgba(${(obj.cr * 0.5) | 0},${(obj.cg * 0.5) | 0},${(obj.cb * 0.5) | 0},${visAlpha.toFixed(2)})`);
             ctx.fillStyle = grad;
             ctx.beginPath(); ctx.arc(proj.px, proj.py, rad, 0, Math.PI * 2); ctx.fill();
+          } else if (starGL && starGL.hasPlanets()
+                     && drawPlanetGL(obj, proj, rad, depth, cosTvel)) {
+            // Drawn as a lit sphere on the GL layer: real surface normal,
+            // world-locked light and spin axis, ring raytraced against the
+            // body so the far half is occluded by depth rather than by paint
+            // order. Everything below is the no-WebGL fallback.
           } else {
             // ===== ring, far half =====
             // A ring only reads as 3D if the planet occludes the half that
