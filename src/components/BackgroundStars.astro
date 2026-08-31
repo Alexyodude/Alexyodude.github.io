@@ -415,6 +415,18 @@
       // granulation, corona. Reads as a fully 3D star — rotates, has a limb,
       // fills the screen smoothly on approach — without any mesh. Noise is
       // cheap hash-fbm; decoration, not simulation.
+      // Both noise shaders feed elapsed time straight into the noise domain,
+      // so their sample coordinates grow without bound while the page is
+      // open. mediump only guarantees ~3 decimal digits, which quantises the
+      // granulation after a few minutes of uptime; highp buys enough headroom
+      // that a session would have to run for days to notice. Guarded because
+      // WebGL1 does not require highp in fragment shaders.
+      const PRECISION_GLSL = `
+        #ifdef GL_FRAGMENT_PRECISION_HIGH
+        precision highp float;
+        #else
+        precision mediump float;
+        #endif`;
       const NOISE_GLSL = `
         float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
         float vnoise(vec2 p) {
@@ -445,7 +457,7 @@
           v_col = a_col;
         }`;
       const BFS = `
-        precision mediump float;
+        ${PRECISION_GLSL}
         varying vec2 v_q;
         varying vec4 v_col;
         uniform float u_t;
@@ -455,19 +467,41 @@
           float seed = v_col.a * 61.7;
           vec3 base = v_col.rgb;
           if (d < 1.0) {
-            // photosphere: fake 3D normal from the disc, granulation advected
-            // slowly, strong limb darkening
+            // photosphere: real spherical parameterisation, granulation
+            // advected slowly, strong limb darkening
             float nz = sqrt(1.0 - d * d);
-            vec2 sp = v_q * (1.0 + (1.0 - nz) * 0.6);   // crude sphere wrap
-            // AXIAL SPIN. Shifting the sample longitude (x) scrolls the
-            // surface pattern around the body, so the star visibly turns
-            // rather than just simmering in place. Divided by the sphere-wrap
-            // factor so the motion slows toward the limb the way a rotating
-            // sphere's surface does. Rate varies per star from its seed.
+            // AXIAL SPIN. Scrolling the sample longitude turns the surface,
+            // so the star visibly rotates rather than simmering in place.
+            // Rate varies per star from its seed.
             float spin = u_t * (0.05 + fract(v_col.a * 7.3) * 0.09);
-            sp.x += spin / (1.0 + (1.0 - nz) * 0.6);
+            // The disc IS the sphere seen face on, so the surface normal is
+            // (v_q.x, v_q.y, nz) and longitude/latitude come straight out of
+            // it. This has to be a genuine spherical mapping, not a radial
+            // stretch: the previous version sampled v_q scaled by
+            // (1 + (1-nz)*0.6) and then added spin divided by that same
+            // factor - an offset that is a pure function of RADIUS. Since
+            // spin grows with u_t, the sample point swept 0.375*spin noise
+            // units radially, which at the fbm frequencies below is 24-182
+            // concentric rings after six minutes of uptime and worse every
+            // minute after that. The disc rendered as tree-ring wood grain
+            // with no granulation left. Here spin is a plain translation
+            // along longitude and cannot alias into radius however large it
+            // grows.
+            // (No backticks in this comment - the shader is a JS template
+            // literal, and one here ends the string mid-GLSL.)
+            float lon = atan(v_q.x, max(nz, 1e-3));
+            float lat = asin(clamp(v_q.y, -1.0, 1.0));
+            vec2 sp = vec2(lon + spin, lat);
             float g1 = fbm(sp * 3.4 + seed + vec2(0.0, u_t * 0.012));
             float g2 = fbm(sp * 9.0 - seed + vec2(0.0, u_t * 0.02));
+            // Longitude's screen-space derivative diverges at the limb (real
+            // foreshortening — a whole hemisphere's worth of surface crowds
+            // into the last few pixels), so the noise would alias into a hard
+            // rim there. Dissolve the detail toward its mean instead; the
+            // mean is preserved, so this costs no brightness.
+            float lw = smoothstep(0.0, 0.30, nz);
+            g1 = mix(0.5, g1, lw);
+            g2 = mix(0.5, g2, lw);
             // Exposure. The old gain was 1.5 against an already near-white
             // base, so every pixel clipped at 1.0 and the disc rendered as a
             // flat white field — measured: mean luminance 252 with a detail
@@ -523,7 +557,7 @@
         varying vec2 v_uv;
         void main() { v_uv = a_p * 0.5 + 0.5; gl_Position = vec4(a_p, 0.0, 1.0); }`;
       const IFS = `
-        precision mediump float;
+        ${PRECISION_GLSL}
         varying vec2 v_uv;
         uniform vec2 u_res;
         uniform float u_t;
