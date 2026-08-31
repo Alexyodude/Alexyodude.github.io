@@ -795,6 +795,135 @@
         return t;
       }
 
+      // ===== BLACK HOLE program =====
+      // Horizon, photon ring, accretion disc and jets in one impostor. The
+      // disc is the same ray-vs-plane annulus the planet ring uses, so its
+      // back half is occluded by the horizon on depth rather than by draw
+      // order - and unlike the old 2d version, which drew a fixed upper and
+      // lower ellipse half, the disc is a real plane that can be seen from
+      // any angle including edge-on.
+      //
+      // No gravitational lensing. Bending the background through the photon
+      // sphere needs the sky as a texture to sample, which is a much larger
+      // change; this keeps the disc honest and leaves lensing alone.
+      const BHFS = `
+        ${PRECISION_GLSL}
+        varying vec2 v_q;
+        uniform vec3 u_rn;      // disc axis (normal), view space
+        uniform float u_t;      // seconds
+        uniform float u_rate;   // orbital rate
+        uniform float u_fade;
+
+        const float DIN = 1.45;
+        const float DOUT = 4.3;
+
+        void main() {
+          float d2 = dot(v_q, v_q);
+          float d = sqrt(d2);
+          bool onEH = d2 < 1.0;
+          float zEH = onEH ? -sqrt(1.0 - d2) : 0.0;
+
+          vec3 col = vec3(0.0);
+          float a = 0.0;
+
+          // Event horizon: flat black, and opaque so it can occlude the disc.
+          if (onEH) { col = vec3(0.0); a = 1.0; }
+
+          // In-plane basis, for the orbital angle.
+          vec3 t0 = abs(u_rn.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+          vec3 e1 = normalize(cross(t0, u_rn));
+          vec3 e2 = cross(u_rn, e1);
+
+          // Accretion disc.
+          if (abs(u_rn.z) > 1e-3) {
+            float t = -(u_rn.x * v_q.x + u_rn.y * v_q.y) / u_rn.z;
+            vec3 P = vec3(v_q.x, v_q.y, t);
+            float rr = length(P);
+            if (rr > DIN && rr < DOUT && !(onEH && t > zEH)) {
+              float u = (rr - DIN) / (DOUT - DIN);
+              float ang = atan(dot(P, e2), dot(P, e1));
+              // Shear: inner orbits sweep faster, so the banding winds up.
+              float turb = 0.72 + 0.28 * sin(ang * 7.0 + u_t * u_rate * 6.0 - u * 9.0)
+                                * (0.6 + 0.4 * sin(ang * 3.0 - u_t * u_rate * 2.5));
+              // Relativistic beaming: the limb swinging toward the camera is
+              // brighter. Orbital velocity is perpendicular to both the axis
+              // and the radius; -z points at the camera.
+              vec3 vdir = normalize(cross(u_rn, P / rr));
+              float beam = clamp(1.0 + 1.7 * (-vdir.z), 0.18, 2.9);
+              vec3 hot = mix(vec3(1.0, 0.95, 0.80), vec3(1.0, 0.40, 0.13), u);
+              float bright = (1.0 - u * 0.72) * turb * beam;
+              vec3 dc = hot * bright * 1.35;
+              float da = clamp(bright * 0.95, 0.0, 1.0);
+              col = col * (1.0 - da) + dc * da;
+              a = a + da * (1.0 - a);
+            }
+          }
+
+          // Photon ring: the thin bright circle hugging the horizon.
+          float pr = exp(-pow((d - 1.13) / 0.055, 2.0));
+          if (pr > 0.004) {
+            vec3 pc = vec3(1.0, 0.86, 0.60) * pr * 1.5;
+            col += pc; a = max(a, pr * 0.9);
+          }
+
+          // Jets along the axis, projected to screen. A 2d cone about the
+          // axis' screen direction - the same approximation the 2d version
+          // used, which is indistinguishable at these sizes.
+          vec2 ax2 = vec2(u_rn.x, u_rn.y);
+          float axl = length(ax2);
+          if (axl > 1e-3) {
+            ax2 /= axl;
+            float sJ = dot(v_q, ax2);
+            float perp = length(v_q - sJ * ax2);
+            float aj = abs(sJ);
+            if (aj > 0.7 && aj < 6.5) {
+              float halfW = 0.16 + 0.085 * aj;
+              float prof = 1.0 - smoothstep(0.0, halfW, perp);
+              float falloff = 1.0 - smoothstep(0.7, 6.5, aj);
+              float ja = prof * falloff * 0.42;
+              col += vec3(0.62, 0.76, 1.0) * ja;
+              a = max(a, ja);
+            }
+          }
+
+          // Outer glow.
+          float halo = exp(-(d - 1.0) * 0.75) * 0.11;
+          if (d > 1.0 && halo > 0.002) {
+            col += vec3(1.0, 0.55, 0.25) * halo;
+            a = max(a, halo);
+          }
+
+          if (a <= 0.002) discard;
+          a *= u_fade;
+          gl_FragColor = vec4(col * a, a);   // premultiplied
+        }`;
+      const bhfs = sh(gl.FRAGMENT_SHADER, BHFS);
+      let bhProg = null, bhloc = null, bhquad = null;
+      const BH_QUAD_R = 7.0;
+      if (pvs && bhfs) {
+        bhProg = gl.createProgram();
+        gl.attachShader(bhProg, pvs); gl.attachShader(bhProg, bhfs); gl.linkProgram(bhProg);
+        if (!gl.getProgramParameter(bhProg, gl.LINK_STATUS)) { console.warn('starGL bh link:', gl.getProgramInfoLog(bhProg)); bhProg = null; }
+        else {
+          bhloc = {
+            corner: gl.getAttribLocation(bhProg, 'a_corner'),
+            res: gl.getUniformLocation(bhProg, 'u_res'),
+            center: gl.getUniformLocation(bhProg, 'u_center'),
+            rpx: gl.getUniformLocation(bhProg, 'u_rpx'),
+            rn: gl.getUniformLocation(bhProg, 'u_rn'),
+            t: gl.getUniformLocation(bhProg, 'u_t'),
+            rate: gl.getUniformLocation(bhProg, 'u_rate'),
+            fade: gl.getUniformLocation(bhProg, 'u_fade'),
+          };
+          const RB = BH_QUAD_R;
+          bhquad = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, bhquad);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -RB, -RB,  RB, -RB,  -RB, RB,   -RB, RB,  RB, -RB,  RB, RB,
+          ]), gl.STATIC_DRAW);
+        }
+      }
+
       let cssW = 0, cssH = 0, cssDpr = 1;
       return {
         resize(w, h, dprV) {
@@ -813,6 +942,24 @@
           gl.clear(gl.COLOR_BUFFER_BIT);
         },
         hasPlanets() { return !!planProg; },
+        hasBlackHoles() { return !!bhProg; },
+        drawBlackHole(o) {
+          if (!bhProg) return;
+          gl.useProgram(bhProg);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+          gl.uniform2f(bhloc.res, cssW, cssH);
+          gl.uniform2f(bhloc.center, o.px, o.py);
+          gl.uniform1f(bhloc.rpx, o.rpx);
+          gl.uniform3f(bhloc.rn, o.rnx, o.rny, o.rnz);
+          gl.uniform1f(bhloc.t, o.t);
+          gl.uniform1f(bhloc.rate, o.rate);
+          gl.uniform1f(bhloc.fade, o.fade);
+          gl.bindBuffer(gl.ARRAY_BUFFER, bhquad);
+          gl.enableVertexAttribArray(bhloc.corner);
+          gl.vertexAttribPointer(bhloc.corner, 2, gl.FLOAT, false, 0, 0);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        },
         // Immediate per-object draw: every planet binds its own albedo map, so
         // there is nothing to batch. Large planets are rare - the small ones
         // go down the point-sprite path - so the call count stays in single
@@ -4795,6 +4942,21 @@
         } else if (_item.type === 'blackhole') {
           const rEH = Math.min(800, obj.physRadius / 1e15 * proj.k / gammaTime);
           if (rEH < 2) continue;
+          if (starGL && starGL.hasBlackHoles()) {
+            // Horizon, photon ring, disc and jets on the GL layer. The disc
+            // is a real plane raytraced against the horizon, so it survives
+            // being viewed edge-on - the 2d version drew a fixed pair of
+            // ellipse halves and could only ever be seen from one attitude.
+            const pf = planetFrame(obj);
+            const AX = toView(pf.ax, _vY);
+            starGL.drawBlackHole({
+              px: proj.px, py: proj.py, rpx: rEH,
+              rnx: AX[0], rny: AX[1], rnz: AX[2],
+              t: tAnimSec, rate: 0.4 + pf.rate * 8,
+              fade: Math.min(1, 0.45 + depth),
+            });
+            continue;
+          }
           const rHalo = rEH * 6;
           const halo = ctx.createRadialGradient(proj.px, proj.py, rEH * 0.5, proj.px, proj.py, rHalo);
           halo.addColorStop(0,   'rgba(255,180,90,0.5)');
