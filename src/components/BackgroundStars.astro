@@ -630,25 +630,31 @@
       const PFS = `
         ${PRECISION_GLSL}
         varying vec2 v_q;
-        uniform sampler2D u_map;     // equirectangular albedo
+        uniform sampler2D u_map;     // equirectangular albedo, broad strokes only
         uniform vec3 u_light;        // view space, planet -> light
         uniform vec3 u_bx;           // planet basis in view space
         uniform vec3 u_by;           // spin axis
         uniform vec3 u_bz;
         uniform float u_spin;        // longitude offset, in turns
-        uniform float u_ring;        // 0 = none, else ring alpha scale
+        uniform float u_ring;
         uniform vec3 u_rn;           // ring plane normal, view space
         uniform vec3 u_tint;         // Doppler multiply
-        uniform float u_atmos;       // 0..1 atmosphere strength
-        uniform vec3 u_acol;         // atmosphere colour
-        uniform float u_fade;        // global alpha
+        uniform float u_atmos;
+        uniform vec3 u_acol;
+        uniform float u_fade;
+        uniform float u_rpx;         // radius in px - gives us the pixel size
+        uniform float u_t;
+        uniform float u_seed;
+        uniform float u_warp;        // coastline domain-warp strength
+        uniform float u_relief;      // bump strength
+        uniform float u_spec;        // specular strength (water/ice)
+        uniform float u_cloud;       // cloud opacity
+        uniform float u_emis;        // self-illumination (lava)
+        ${NOISE_GLSL}
 
         const float RIN = 1.24;
         const float ROUT = 2.08;
 
-        // Radial density profile of the ring: one major division, two lesser
-        // gaps, ringlet ripple, soft inner and outer edges. Same curve the
-        // canvas version used, so the look carries across unchanged.
         float ringDens(float t) {
           float d = 1.0;
           d *= 1.0 - 0.94 * exp(-pow((t - 0.47) / 0.050, 2.0));
@@ -662,30 +668,82 @@
 
         void main() {
           float d2 = dot(v_q, v_q);
-          bool onSphere = d2 < 1.0;
-          float nz = onSphere ? sqrt(1.0 - d2) : 0.0;
-          // The front hemisphere faces the camera, which sits at -z.
-          vec3 N = vec3(v_q.x, v_q.y, -nz);
-          float zSphere = -nz;               // depth of the front surface
+          float d = sqrt(d2);
+          // One pixel measured in v_q units. The impostor knows its own radius
+          // in px, so the silhouette can be antialiased exactly without
+          // needing the derivatives extension.
+          float pxw = 1.0 / max(u_rpx, 1.0);
+          float cov = smoothstep(1.0 + pxw, 1.0 - pxw, d);
 
           vec3 surf = vec3(0.0);
-          float surfA = 0.0;
           float ndl = 0.0;
-          if (onSphere) {
-            // Rotate into the planet's own frame, so longitude and latitude
-            // live on the body instead of on the screen.
-            float px = dot(N, u_bx), py = dot(N, u_by), pz = dot(N, u_bz);
-            float lat = asin(clamp(py, -1.0, 1.0)) / 1.5707963;
-            float lon = atan(px, pz) / 3.1415927 + u_spin;
+          float nz = sqrt(max(0.0, 1.0 - min(d2, 1.0)));
+          vec3 N = vec3(v_q.x, v_q.y, -nz);
+
+          if (cov > 0.0) {
+            // Into the planet's own frame.
+            float sx = dot(N, u_bx), sy = dot(N, u_by), sz = dot(N, u_bz);
+            float lat = asin(clamp(sy, -1.0, 1.0)) / 1.5707963;
+            float lon = atan(sx, sz) / 3.1415927 + u_spin;
             vec2 uv = vec2(fract(lon * 0.5 + 0.5), clamp(lat * 0.5 + 0.5, 0.002, 0.998));
-            vec3 alb = texture2D(u_map, uv).rgb;
-            // Lambert with a softened terminator, plus enough ambient that
-            // the night side reads as a silhouette rather than a hole.
-            ndl = dot(N, u_light);
-            float diff = smoothstep(-0.12, 0.35, ndl);
-            float shade = 0.12 + 0.98 * diff;
-            // Ring shadow cast onto the planet: step from this surface point
-            // toward the light and see whether it crosses the annulus.
+
+            // Surface-space coordinate for all procedural detail. Longitude is
+            // scaled by cos(lat) so features do not smear into stripes as they
+            // approach the poles.
+            // All procedural detail is sampled from the SURFACE POINT, never
+            // from lon/lat. atan-based longitude has a derivative singularity
+            // at the silhouette - a whole hemisphere crowds into the last few
+            // pixels - so noise sampled in it smears into radial streaks
+            // there, and the terminator's steep ramp then amplifies those
+            // smeared normals into visible fur. Damping the noise at the limb
+            // did not fix it because the fur reached ~20% of the radius
+            // inward, where the limb weight is already 1.
+            //
+            // The unit surface vector is just the normal, so its screen
+            // derivative is bounded everywhere. Two planar projections of it
+            // give a well-behaved 2D domain with no pole and no seam. The
+            // texture lookup still uses lon/lat because the map is
+            // equirectangular, but that path is mipmapped and carries only
+            // broad strokes.
+            vec3 Ps = vec3(sx, sy, sz);
+            vec2 qa = vec2(Ps.x, Ps.y) * 3.2 + u_seed;
+            vec2 qb = vec2(Ps.z, Ps.y) * 3.2 + u_seed * 1.7;
+            float lw = smoothstep(0.0, 0.16, nz);
+
+            // Fractal coastline. The map carries only broad strokes at
+            // 512x256; magnified straight it gives the stair-stepped border
+            // that made the planet look printed. Warping the lookup with fine
+            // noise turns that smooth boundary into detailed coast at any
+            // zoom, at no extra texture cost.
+            vec2 warp = vec2(fbm(qa * 1.9), fbm(qb * 1.9 + 11.7)) - 0.5;
+            vec3 alb = texture2D(u_map, uv + warp * u_warp).rgb;
+            // Grazing angles look through more air than ground.
+            alb = mix(u_acol * 0.45, alb, 0.62 + 0.38 * lw);
+
+            // Fine mottling, so ocean and land each carry variation instead of
+            // reading as two flat fills.
+            float grain = fbm(qa * 4.2 + 3.1) * 0.5 + fbm(qb * 4.2) * 0.5;
+            alb *= 0.86 + 0.28 * grain;
+
+            // Relief: height field, normal by finite difference, applied in
+            // the local tangent frame (east/north from the spin axis).
+            float e = 0.05;
+            float hC = fbm(qa * 2.4);
+            float hX = fbm(qa * 2.4 + vec2(e, 0.0));
+            float hY = fbm(qa * 2.4 + vec2(0.0, e));
+            vec3 T = normalize(cross(u_by, N) + vec3(1e-5));
+            vec3 B = cross(N, T);
+            vec3 Nb = normalize(N + (T * (hC - hX) + B * (hC - hY)) * u_relief * 2.2);
+
+            ndl = dot(Nb, u_light);
+            // Tighter terminator than the old wide ramp, with a little wrap so
+            // the day/night boundary is not a hard line either.
+            float term = smoothstep(-0.11, 0.30, ndl);
+            // Ambient is warmer on the day side and near-black at night, so
+            // the dark limb stops looking like flat grey paint.
+            float shade = 0.11 + 0.95 * term;
+
+            // Ring shadow on the planet.
             if (u_ring > 0.0 && abs(dot(u_rn, u_light)) > 1e-3) {
               float sT = -dot(u_rn, N) / dot(u_rn, u_light);
               if (sT > 0.0) {
@@ -695,35 +753,66 @@
                 }
               }
             }
+
             surf = alb * shade;
-            surfA = 1.0;
-            // Atmospheric limb scattering, strongest where the limb is lit.
+
+            // Specular sun-glint. Water is the blue-dominant part of the
+            // albedo, so the highlight lands on sea and not on land - matte
+            // water was a big part of why this read as plastic.
+            if (u_spec > 0.0) {
+              float water = clamp((alb.b - max(alb.r, alb.g)) * 4.0, 0.0, 1.0);
+              vec3 H = normalize(u_light + vec3(0.0, 0.0, -1.0));
+              float sp2 = pow(max(0.0, dot(normalize(mix(N, Nb, 0.35)), H)), 48.0);
+              surf += vec3(1.0, 0.97, 0.88) * sp2 * water * u_spec * term;
+            }
+
+            // Self-illumination for lava worlds: the hot fraction glows on the
+            // night side instead of going black.
+            if (u_emis > 0.0) {
+              float hot = clamp((alb.r - alb.b) * 2.2, 0.0, 1.0);
+              surf += alb * hot * u_emis * (1.0 - term * 0.75);
+            }
+
+            // Cloud deck: its own layer, turning slightly faster than the
+            // surface, casting a soft shadow down onto it.
+            if (u_cloud > 0.0) {
+              vec2 cp = vec2((lon + u_t * 0.004) * clat, lat) * 3.2 + 57.0;
+              float cf = fbm(cp) * 0.65 + fbm(cp * 2.7) * 0.35;
+              float cover = smoothstep(0.52, 0.78, cf) * u_cloud;
+              // Shadow: sample the deck again, offset toward the light.
+              vec2 cs = cp + vec2(u_light.x, -u_light.y) * 0.22;
+              float sf = fbm(cs) * 0.65 + fbm(cs * 2.7) * 0.35;
+              surf *= 1.0 - 0.34 * smoothstep(0.52, 0.78, sf) * u_cloud;
+              surf = mix(surf, vec3(1.0, 0.99, 0.97) * (0.06 + 0.96 * term), cover);
+            }
+
+            // Atmosphere. Forward scattering makes the lit limb flare, and a
+            // trace of airglow keeps the night limb from being a dead edge.
             if (u_atmos > 0.0) {
-              float rim = pow(1.0 - nz, 3.0);
-              surf += u_acol * rim * u_atmos * (0.25 + 0.75 * max(0.0, ndl));
+              // Hug the limb. A wide, bright rim read as a detached bubble
+              // around the planet rather than as air on it.
+              float rim = pow(1.0 - nz, 7.0);
+              float fwd = 0.25 + 1.1 * max(0.0, ndl);
+              surf += u_acol * rim * u_atmos * fwd * 0.55;
+              surf += u_acol * pow(1.0 - nz, 11.0) * u_atmos * 0.05;
             }
           }
 
           vec3 col = surf;
-          float a = surfA;
+          float a = cov;
 
+          // Ring, raytraced against the sphere (see the note on the program).
           if (u_ring > 0.0 && abs(u_rn.z) > 1e-3) {
-            // Where does this pixel's view ray pierce the ring plane?
             float t = -(u_rn.x * v_q.x + u_rn.y * v_q.y) / u_rn.z;
             vec3 P = vec3(v_q.x, v_q.y, t);
             float rr = length(P);
             if (rr > RIN && rr < ROUT) {
-              // Hidden when the crossing lies behind the body.
-              bool blocked = onSphere && t > zSphere;
+              bool blocked = (d < 1.0) && t > -nz;
               if (!blocked) {
                 float dens = ringDens((rr - RIN) / (ROUT - RIN));
-                // The planet's own shadow falling across the ring: the ray
-                // from P toward the light passes within one radius of centre,
-                // on the far side from the light.
                 float pl = dot(P, u_light);
                 float perp2 = dot(P, P) - pl * pl;
                 if (pl < 0.0 && perp2 < 1.0) dens *= 0.20;
-                // Icy and slightly blue-grey - ring particles are not the body.
                 vec3 rcol = vec3(0.82, 0.80, 0.75) * (0.35 + 0.65 * abs(dot(u_rn, u_light)));
                 float ra = clamp(dens * 0.92 * u_ring, 0.0, 1.0);
                 col = col * (1.0 - ra) + rcol * ra;
@@ -732,7 +821,7 @@
             }
           }
 
-          if (a <= 0.001) discard;
+          if (a <= 0.002) discard;
           col *= u_tint;
           a *= u_fade;
           gl_FragColor = vec4(col * a, a);   // premultiplied
@@ -762,6 +851,13 @@
             atmos: gl.getUniformLocation(planProg, 'u_atmos'),
             acol: gl.getUniformLocation(planProg, 'u_acol'),
             fade: gl.getUniformLocation(planProg, 'u_fade'),
+            t: gl.getUniformLocation(planProg, 'u_t'),
+            seed: gl.getUniformLocation(planProg, 'u_seed'),
+            warp: gl.getUniformLocation(planProg, 'u_warp'),
+            relief: gl.getUniformLocation(planProg, 'u_relief'),
+            spec: gl.getUniformLocation(planProg, 'u_spec'),
+            cloud: gl.getUniformLocation(planProg, 'u_cloud'),
+            emis: gl.getUniformLocation(planProg, 'u_emis'),
           };
           const RQ = PLANET_QUAD_R;
           pquad = gl.createBuffer();
@@ -784,7 +880,13 @@
         // REPEAT on longitude so the seam closes as the body spins.
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        // Trilinear. Near the silhouette lon = atan(sx, sz) changes by a
+        // whole hemisphere across a few pixels, so a LINEAR-only lookup
+        // samples far-apart texels on adjacent fragments and shreds into
+        // radial fur. Mipmaps let the hardware pick a level that matches that
+        // compression. 512x256 is power-of-two, so this is legal in WebGL1.
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         if (mapTex.size >= MAP_TEX_LIMIT) {
           const oldest = mapTex.keys().next().value;
@@ -1066,6 +1168,13 @@
           gl.uniform1f(ploc.atmos, o.atmos);
           gl.uniform3f(ploc.acol, o.ar, o.ag, o.ab);
           gl.uniform1f(ploc.fade, o.fade);
+          gl.uniform1f(ploc.t, o.t);
+          gl.uniform1f(ploc.seed, o.seed);
+          gl.uniform1f(ploc.warp, o.warp);
+          gl.uniform1f(ploc.relief, o.relief);
+          gl.uniform1f(ploc.spec, o.spec);
+          gl.uniform1f(ploc.cloud, o.cloud);
+          gl.uniform1f(ploc.emis, o.emis);
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, tex);
           gl.uniform1i(ploc.map, 0);
@@ -3140,7 +3249,18 @@
                   ax[2] * bx[0] - ax[0] * bx[2],
                   ax[0] * bx[1] - ax[1] * bx[0]];
       // Turns per second. Slow enough to read as rotation rather than spin.
-      obj._pf = { ax, bx, bz, L: pick(), rate: 0.008 + r() * 0.03 };
+      // Light direction. Biased toward -Z rather than uniformly random: the
+      // visit button always teleports to wz - approach and looks down +Z, so
+      // an unbiased light left half of all visited planets as a thin crescent
+      // (measured: disc mean luminance 25/255, 16% of the disc lit). The bias
+      // is on one axis only, so the terminator still falls at a different
+      // angle on every body and the tour - which arrives from arbitrary
+      // directions - still shows real phases.
+      const L = pick();
+      L[2] = -(0.40 + 0.55 * Math.abs(L[2]));
+      const Ln = Math.hypot(L[0], L[1], L[2]) || 1;
+      L[0] /= Ln; L[1] /= Ln; L[2] /= Ln;
+      obj._pf = { ax, bx, bz, L, rate: 0.008 + r() * 0.03 };
       return obj._pf;
     }
 
@@ -4640,8 +4760,18 @@
             tr = 1 + (cr2 - 1) * ta; tg = 1 + (cg2 - 1) * ta; tb = 1 + (cb2 - 1) * ta;
           }
         }
-        const hasAtmos = obj.kind === 'ocean' || obj.kind === 'gas_giant'
-                      || obj.kind === 'ice_giant' || obj.kind === 'shrouded';
+        // Per-kind material mix. Each world type gets its own balance of
+        // gloss, cloud cover, relief and air - a rocky world should be dry and
+        // rough, an ocean world glossy under broken cloud, a gas giant all
+        // atmosphere and no ground.
+        const K = obj.kind || 'rocky';
+        let warp = 0.012, relief = 0.9, spec = 0.05, cloud = 0.06, emis = 0, atmosK = 0.16;
+        if (K === 'ocean')          { warp = 0.016; relief = 0.5; spec = 1.0;  cloud = 0.55; atmosK = 0.95; }
+        else if (K === 'gas_giant') { warp = 0.008; relief = 0.2; spec = 0.0;  cloud = 0.12; atmosK = 0.85; }
+        else if (K === 'ice_giant') { warp = 0.008; relief = 0.2; spec = 0.18; cloud = 0.16; atmosK = 0.75; }
+        else if (K === 'iceworld')  { warp = 0.013; relief = 0.7; spec = 0.55; cloud = 0.12; atmosK = 0.22; }
+        else if (K === 'lava')      { warp = 0.014; relief = 0.9; spec = 0.15; cloud = 0.10; emis = 0.85; atmosK = 0.30; }
+        else if (K === 'shrouded')  { warp = 0.010; relief = 0.3; spec = 0.0;  cloud = 0.92; atmosK = 1.0; }
         const _opts = ({
           key, makeCanvas: () => buildPlanetMap(obj, key),
           px: proj.px, py: proj.py, rpx: radPx,
@@ -4655,7 +4785,9 @@
           ring: obj.hasRing ? 1 : 0,
           rnx: BY[0], rny: BY[1], rnz: BY[2],
           tr, tg, tb,
-          atmos: hasAtmos ? 0.55 : 0,
+          atmos: atmosK,
+          t: tAnimSec, seed: (key & 0xffff) / 811.0,
+          warp, relief, spec, cloud, emis,
           ar: Math.min(255, obj.cr + 80) / 255,
           ag: Math.min(255, obj.cg + 80) / 255,
           ab: Math.min(255, obj.cb + 80) / 255,
