@@ -1097,6 +1097,41 @@
     const BG_FADE_DEPTH = 1 - BG_RENDER_FRAC;
     const BG_FADE_BAND = 0.08;
 
+    // ===== scenery screen-density budget =====
+    // Stars per megapixel of viewport (CSS px). Relativistic aberration folds
+    // the whole sky into the forward cone, so the on-screen count is a
+    // function of SPEED, not of the field: measured 120-500 visible stars in
+    // open sky at moderate speed against 13,346 at cruise in the same 538x551
+    // viewport — one star per 22 px², packed tighter than a single dot's own
+    // glow. Past that the dots overlap into a mottled sheet with dark lanes
+    // between the saturated patches, which reads as a ripple.
+    //
+    // Nothing about the field is actually clustered: the measured two-point
+    // correlation is ξ(r) = -0.07, FLAT from 11 to 134 px (a clumped field
+    // would show a positive bump at the clump scale). So the fix belongs on
+    // the count, not on the generator.
+    //
+    // Budgeting per megapixel rather than per frame also fixes the small-window
+    // case: the angular field of view does not shrink with the window, so at
+    // 538x551 the same sky landed on 1/11th the pixels of a 2560x1305 one.
+    const BG_SCREEN_BUDGET_PER_MPX = 2600;
+    // Survivors are chosen by a deterministic per-star hash, so it is the same
+    // set of stars frame to frame — an independent draw each frame would make
+    // the entire sky flicker. The ones nearest the cut fade across this
+    // fraction of the keep window instead of popping as the budget drifts.
+    const BG_THIN_FADE = 0.3;
+    // Backstop against a runaway feedback loop, not a working value.
+    const BG_THIN_MIN = 0.02;
+    // Seconds for the keep fraction to close ~63% of the gap to its target.
+    // Slow enough that the governor cannot oscillate against its own
+    // measurement, fast enough to track an accelerating camera.
+    const BG_THIN_TAU = 0.4;
+    // Governor state. `bgKeptLast` is what actually reached the screen last
+    // frame; dividing it by the fraction admitted recovers the unthinned
+    // count, which is what the budget has to be compared against.
+    let bgKeepFrac = 1;
+    let bgKeptLast = 0;
+
     // ===== chunk generator =====
     function generateChunk(chx, chy, chz) {
       const r = mulberry32(hashChunk(chx, chy, chz));
@@ -3732,6 +3767,16 @@
         const betaNow = Math.min(0.999, camV / C);
         window.__deepState.beta = { beta: betaNow, gamma: 1/Math.sqrt(1 - betaNow*betaNow), smooth: smoothBeta };
         window.__deepState.time = { tAnim, tAnimSec, dt, fps: dt > 0 ? 1/dt : 0 };
+        // Scenery density governor — `kept` is what reached the canvas,
+        // `unthinned` what would have without the budget. Exposed because the
+        // budget is the one constant here that has to be tuned by measurement.
+        window.__deepState.scenery = {
+          kept: bgKeptLast,
+          keepFrac: bgKeepFrac,
+          unthinned: Math.round(bgKeptLast / Math.max(BG_THIN_MIN, bgKeepFrac)),
+          budget: Math.round(BG_SCREEN_BUDGET_PER_MPX * (W * H) / 1e6),
+          perMpx: Math.round(bgKeptLast / ((W * H) / 1e6)),
+        };
         let apInfo = { enabled: autopilot, active: !!autopilotActive, phase: autopilotPhase, target: null, dist: 0, centreDist: 0, closeThreshold: 0, baseSpeed: 0, travelTime: 0, lingerTime: 0, next: null };
         if (autopilotTarget) {
           const tdx0 = (autopilotTarget.wx + autopilotOffset[0]) - cam[0];
@@ -3842,6 +3887,24 @@
       let nearestBHrs = 0;
       let nearestRThisFrame = 0;
 
+      // Scenery density governor. Last frame `bgKeptLast` stars reached the
+      // screen while only the fraction `bgKeepFrac` was admitted, so the
+      // unthinned count is bgKeptLast / bgKeepFrac and the fraction that lands
+      // exactly on budget is budget / that. Correcting for our own thinning is
+      // what keeps this from collapsing to the floor as the camera accelerates.
+      const bgBudget = BG_SCREEN_BUDGET_PER_MPX * (W * H) / 1e6;
+      if (bgKeptLast > 0) {
+        const unthinned = bgKeptLast / Math.max(BG_THIN_MIN, bgKeepFrac);
+        const want = Math.max(BG_THIN_MIN, Math.min(1, bgBudget / unthinned));
+        bgKeepFrac += (want - bgKeepFrac) * Math.min(1, dt / BG_THIN_TAU);
+      } else {
+        bgKeepFrac = 1;
+      }
+      const bgThinning = bgKeepFrac < 0.999;
+      const bgCut = bgKeepFrac * 65536;          // hash threshold, 16-bit units
+      const bgFadeFrom = bgCut * (1 - BG_THIN_FADE);
+      let bgKept = 0;
+
       for (let dx = -N_RADIUS; dx <= N_RADIUS; dx++) {
         for (let dy = -N_RADIUS; dy <= N_RADIUS; dy++) {
           for (let dz = minDz; dz <= maxDz; dz++) {
@@ -3882,6 +3945,15 @@
               // Culled here rather than at draw time so distant scenery costs
               // no projection or aberration work either.
               if (obj.bg && d2 > BG_RENDER_D2) continue;
+              // Density thinning happens HERE, ahead of the aberration and
+              // projection work, so a star the budget rejects costs one hash
+              // and nothing else. `bgU` rides along to the draw so the stars
+              // sitting just under the cut can be faded rather than dropped.
+              let bgU = 0;
+              if (obj.bg && bgThinning) {
+                bgU = objHash(obj) & 0xffff;
+                if (bgU >= bgCut) continue;
+              }
               // Relativistic aberration in the VELOCITY frame (not camera frame).
               // We rotate the source direction around the perpendicular plane to
               // velocity by the aberration angle, then project the aberrated
@@ -3933,8 +4005,12 @@
               const sortDepth = Math.max(1, aoz - r3d);
               // Reuse the velocity-frame cosine computed for aberration.
               const cosTvel = cosTvelLocal;
+              // Counted here, not at the cull — the budget is about stars that
+              // actually land on the canvas, and everything above this point
+              // can still reject one.
+              if (obj.bg) bgKept++;
               if (obj.type === 'star' || obj.type === 'planet') {
-                drawList.push({ type: obj.type, obj, proj, depth, cosTvel, sortDepth });
+                drawList.push({ type: obj.type, obj, proj, depth, cosTvel, sortDepth, bgU });
               } else if (obj.type === 'nebula') {
                 drawList.push({ type: 'nebula', obj, proj, depth, cosTvel, sortDepth });
               } else if (obj.type === 'blackhole') {
@@ -3944,6 +4020,9 @@
           }
         }
       }
+
+      // Feed the governor its measurement for the next frame.
+      bgKeptLast = bgKept;
 
       // Painter's algorithm: depth-sort everything visible so distant objects
       // render before nearer ones (proper occlusion at all distances).
@@ -4078,6 +4157,13 @@
               // camera crosses the scenery cull radius.
               const f = (depth - BG_FADE_DEPTH) / BG_FADE_BAND;
               a *= f < 0 ? 0 : f > 1 ? 1 : f;
+              // ...and out across the top of the density-budget window, so a
+              // drifting keep fraction dissolves stars instead of blinking
+              // them. The band is a fraction of the window, so it scales with
+              // the cut rather than being a fixed number of hash values.
+              if (bgThinning && _item.bgU > bgFadeFrom) {
+                a *= 1 - (_item.bgU - bgFadeFrom) / (bgCut - bgFadeFrom);
+              }
             }
             let cr = obj.cr, cg = obj.cg, cb = obj.cb;
             if (beta > 0.01) {

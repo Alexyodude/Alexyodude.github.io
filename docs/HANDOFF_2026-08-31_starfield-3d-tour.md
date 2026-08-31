@@ -338,6 +338,8 @@ All were `browser_evaluate` snippets against `window.__deepState` and
 |---|---|---|---|
 | `BG_STARS_PER_CHUNK` | 8 | 1082 | scenery density; first dial if fps suffers |
 | `BG_RENDER_FRAC` | 1.0 | 1092 | scenery draw radius (was 0.45 under canvas2d) |
+| `BG_SCREEN_BUDGET_PER_MPX` | 2600 | 1117 | on-screen scenery cap per megapixel — the ripple fix |
+| `BG_THIN_FADE` / `_TAU` | 0.3 / 0.4 | 1122/1128 | dissolve band / governor time constant |
 | `STAR_WHITEN` | 0.9 | 2323 | 1.0 = pure white; 0 = full spectral hue |
 | `STAR_GAMMA` | 1.35 | 2327 | brightness skew |
 | `STAR_TWINKLE` / `_HZ` | 0.55 / 0.22 | 2329/2333 | scintillation depth / speed |
