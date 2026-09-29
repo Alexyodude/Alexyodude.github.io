@@ -1,0 +1,70 @@
+---
+import '../../styles/global.css';
+import BackgroundStars from '../../components/BackgroundStars.astro';
+import NavBar from '../../components/NavBar.astro';
+import Footer from '../../components/Footer.astro';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>StoryToVideo privacy policy — alexyodude.com</title>
+    <meta name="description" content="What StoryToVideo accesses, stores and shares." />
+    <!-- Dark only — see index.astro. -->
+    <script is:inline>
+      document.documentElement.setAttribute('data-theme', 'dark');
+    </script>
+  </head>
+  <body>
+    <BackgroundStars />
+    <NavBar />
+    <main>
+      <section class="px-6 py-16 max-w-3xl mx-auto space-y-5">
+        <a href="/storytovideo" class="text-sm text-muted underline decoration-muted underline-offset-4 hover:text-accent hover:decoration-accent">← StoryToVideo</a>
+        <h1 class="mt-6 text-4xl font-bold tracking-tight">Privacy policy</h1>
+        <p class="text-muted">Last updated 29 September 2026.</p>
+
+        <h2 class="text-2xl font-semibold">Who uses it</h2>
+        <p>
+          StoryToVideo is a personal tool used only by its author, Alex, for Alex's own channels.
+          It has no other users and collects no information about anyone.
+        </p>
+
+        <h2 class="text-2xl font-semibold">Google and YouTube data</h2>
+        <p>
+          StoryToVideo uses the YouTube API Services with a single permission,
+          <code>youtube.upload</code>, to upload videos to Alex's own YouTube channel. It does not
+          read, change or delete other videos, and it requests no other Google data.
+        </p>
+        <p>
+          The sign-in token Google issues is stored only on Alex's own computer. It is not sent
+          to any server run by StoryToVideo, and it is not shared with, sold to or used by anyone
+          else, including for advertising.
+        </p>
+        <p>
+          StoryToVideo's use of information received from Google APIs adheres to the
+          <a href="https://developers.google.com/terms/api-services-user-data-policy" class="underline underline-offset-4 hover:text-accent">Google API Services User Data Policy</a>,
+          including the Limited Use requirements.
+        </p>
+        <p>
+          Uploading through YouTube is also subject to the
+          <a href="https://policies.google.com/privacy" class="underline underline-offset-4 hover:text-accent">Google Privacy Policy</a>.
+        </p>
+
+        <h2 class="text-2xl font-semibold">Revoking access</h2>
+        <p>
+          Access can be removed at any time from the Google Account's
+          <a href="https://myaccount.google.com/connections" class="underline underline-offset-4 hover:text-accent">third-party connections</a>
+          page; deleting the stored token on the computer ends it as well.
+        </p>
+
+        <h2 class="text-2xl font-semibold">Contact</h2>
+        <p>thisisconnection720@gmail.com</p>
+      </section>
+    </main>
+    <Footer />
+  </body>
+</html>

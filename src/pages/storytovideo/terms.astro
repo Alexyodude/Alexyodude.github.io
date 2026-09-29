@@ -1,0 +1,51 @@
+---
+import '../../styles/global.css';
+import BackgroundStars from '../../components/BackgroundStars.astro';
+import NavBar from '../../components/NavBar.astro';
+import Footer from '../../components/Footer.astro';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>StoryToVideo terms of service — alexyodude.com</title>
+    <meta name="description" content="The terms under which StoryToVideo is used." />
+    <!-- Dark only — see index.astro. -->
+    <script is:inline>
+      document.documentElement.setAttribute('data-theme', 'dark');
+    </script>
+  </head>
+  <body>
+    <BackgroundStars />
+    <NavBar />
+    <main>
+      <section class="px-6 py-16 max-w-3xl mx-auto space-y-5">
+        <a href="/storytovideo" class="text-sm text-muted underline decoration-muted underline-offset-4 hover:text-accent hover:decoration-accent">← StoryToVideo</a>
+        <h1 class="mt-6 text-4xl font-bold tracking-tight">Terms of service</h1>
+        <p class="text-muted">Last updated 29 September 2026.</p>
+
+        <p>
+          StoryToVideo is a personal tool for its author's own use. It is not offered as a
+          service to anyone else, and no one else may sign in to it.
+        </p>
+        <p>
+          It uploads to YouTube through the YouTube API Services. By using it, the account holder
+          agrees to the
+          <a href="https://www.youtube.com/t/terms" class="underline underline-offset-4 hover:text-accent">YouTube Terms of Service</a>
+          and the
+          <a href="https://policies.google.com/privacy" class="underline underline-offset-4 hover:text-accent">Google Privacy Policy</a>.
+        </p>
+        <p>
+          The tool is provided as is, without warranty of any kind. How its data is handled is
+          set out in the
+          <a href="/storytovideo/privacy" class="underline underline-offset-4 hover:text-accent">privacy policy</a>.
+        </p>
+        <p>Contact: thisisconnection720@gmail.com</p>
+      </section>
+    </main>
+    <Footer />
+  </body>
+</html>
