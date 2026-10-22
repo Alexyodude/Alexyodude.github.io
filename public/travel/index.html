@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Wayfinder</title>
+  <meta name="description" content="Save places from search, links, videos and the share sheet, then route between them.">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="map" aria-label="Map"></div>
+
+  <div class="topbar">
+    <form id="search-form" class="search" role="search" autocomplete="off">
+      <input id="q" type="search" placeholder="Search a place, or paste a link" aria-label="Search a place, or paste a link" enterkeyhint="search">
+      <button type="button" id="btn-media" class="icon" title="Add from a video or photo" aria-label="Add from a video or photo">🎬</button>
+      <button type="button" id="btn-pin" class="icon" title="Drop a pin on the map" aria-label="Drop a pin on the map">📍</button>
+    </form>
+    <ul id="results" class="results" hidden></ul>
+    <div id="pin-hint" class="hint" hidden>Tap the map to drop a pin. <button type="button" id="pin-cancel" class="link">Cancel</button></div>
+  </div>
+  <input id="media-input" type="file" accept="video/*,image/*" multiple hidden>
+
+  <section id="panel" class="panel" data-size="half">
+    <button type="button" id="grab" class="grab" aria-label="Resize panel"><span></span></button>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="places" aria-selected="true">Places <span id="count" class="badge">0</span></button>
+      <button role="tab" data-tab="route" aria-selected="false">Route <span id="stop-count" class="badge">0</span></button>
+    </nav>
+
+    <div class="tab" id="tab-places">
+      <div class="row">
+        <input id="filter" type="search" placeholder="Filter places" aria-label="Filter places">
+      </div>
+      <ul id="places" class="list"></ul>
+      <p id="places-empty" class="empty">
+        No places yet. Search above, paste a Google Maps or TikTok link, drop a pin,
+        add a video, or share to Wayfinder from another app.
+      </p>
+      <div class="row small">
+        <button type="button" id="btn-export">Back up</button>
+        <label class="btn">Restore<input id="import-file" type="file" accept="application/json,.json" hidden></label>
+        <button type="button" id="btn-howto" class="link">How to share into this app</button>
+      </div>
+    </div>
+
+    <div class="tab" id="tab-route" hidden>
+      <div class="seg" role="radiogroup" aria-label="Travel mode">
+        <button data-profile="car" role="radio">🚗 Drive</button>
+        <button data-profile="bike" role="radio">🚲 Bike</button>
+        <button data-profile="foot" role="radio">🚶 Walk</button>
+      </div>
+      <div id="summary" class="summary"></div>
+      <ol id="stops" class="list stops"></ol>
+      <p id="stops-empty" class="empty">Add places to the route from the Places tab or a map pin. Tap the route line to add a stop there.</p>
+      <div class="row small wrap">
+        <button type="button" id="btn-optimize">Optimise order</button>
+        <button type="button" id="btn-reverse">Reverse</button>
+        <label class="check"><input type="checkbox" id="keep-end" checked> Keep last stop last</label>
+        <button type="button" id="btn-clear" class="link danger">Clear</button>
+      </div>
+
+      <details id="along" class="block">
+        <summary>Find stops along the route</summary>
+        <div class="row">
+          <select id="poi-type" aria-label="Kind of place"></select>
+          <button type="button" id="btn-along">Search</button>
+        </div>
+        <ul id="along-results" class="list compact"></ul>
+      </details>
+
+      <details id="directions" class="block">
+        <summary>Directions</summary>
+        <ol id="steps" class="steps"></ol>
+      </details>
+
+      <div class="row small wrap">
+        <a id="btn-gmaps" class="btn" target="_blank" rel="noopener">Open in Google Maps</a>
+        <button type="button" id="btn-gpx">GPX</button>
+        <button type="button" id="btn-share-route">Share trip</button>
+      </div>
+    </div>
+  </section>
+
+  <dialog id="dlg-edit" class="dialog">
+    <form method="dialog" id="edit-form">
+      <header><h2>Edit place</h2><button value="cancel" class="icon" aria-label="Close">✕</button></header>
+      <img id="edit-thumb" class="thumb-lg" alt="" hidden>
+      <label>Name <input name="name" required></label>
+      <label>Address <input name="address"></label>
+      <label>Category <input name="category" list="categories"></label>
+      <label>Notes <textarea name="notes" rows="3" placeholder="Opening hours, what to order, who recommended it…"></textarea></label>
+      <div class="row two">
+        <label>Lat <input name="lat" inputmode="decimal" required></label>
+        <label>Lng <input name="lng" inputmode="decimal" required></label>
+      </div>
+      <p class="muted small">Tip: drag the marker on the map to fine-tune the spot.</p>
+      <p id="edit-source" class="muted small"></p>
+      <footer>
+        <button value="delete" class="danger">Delete</button>
+        <span class="spacer"></span>
+        <button value="route" id="edit-route">Add to route</button>
+        <button value="save" class="primary">Save</button>
+      </footer>
+    </form>
+  </dialog>
+  <datalist id="categories"></datalist>
+
+  <dialog id="dlg-import" class="dialog">
+    <form method="dialog">
+      <header><h2 id="import-title">Add places</h2><button value="cancel" class="icon" aria-label="Close">✕</button></header>
+      <div id="import-source" class="source"></div>
+      <div id="import-found"></div>
+      <label>Search for a place mentioned
+        <input id="import-q" type="search" placeholder="e.g. Fushimi Inari, Kyoto">
+      </label>
+      <div id="import-chips" class="chips"></div>
+      <ul id="import-results" class="list compact"></ul>
+      <footer>
+        <button type="button" id="import-pin" class="link">Pick on map instead</button>
+        <span class="spacer"></span>
+        <button value="done" class="primary">Done</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-howto" class="dialog">
+    <form method="dialog">
+      <header><h2>Sharing into Wayfinder</h2><button value="cancel" class="icon" aria-label="Close">✕</button></header>
+      <h3>Android</h3>
+      <p>Install the app (browser menu → <em>Install app</em> / <em>Add to Home screen</em>). Wayfinder then
+        appears in the share sheet of TikTok, Instagram, YouTube, Google Maps, Gallery and so on.</p>
+      <h3>iPhone / iPad</h3>
+      <p>Safari doesn’t let web apps join the share sheet, so use a one-time Shortcut:</p>
+      <ol>
+        <li>Shortcuts → <b>+</b> → name it “Wayfinder”, turn on <em>Show in Share Sheet</em>, accept URLs and Text.</li>
+        <li>Add <b>URL Encode</b> (input: Shortcut Input).</li>
+        <li>Add <b>Open URLs</b> with <code id="shortcut-url"></code><b>[URL Encoded Text]</b>.</li>
+      </ol>
+      <p>Then Share → Wayfinder from any app. For videos saved to Photos, use the 🎬 button instead.</p>
+      <h3>Desktop</h3>
+      <p>Drag this to your bookmarks bar, then click it on any page: <a id="bookmarklet" class="btn">+ Wayfinder</a></p>
+      <footer><span class="spacer"></span><button value="ok" class="primary">Got it</button></footer>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

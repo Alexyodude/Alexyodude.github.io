@@ -8,6 +8,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
+    "test:travel": "node --test tests/travel/*.test.mjs",
     "cloudflare:dns": "node --env-file=.env scripts/cloudflare-dns.mjs"
   },
   "dependencies": {
