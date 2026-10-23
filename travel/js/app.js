@@ -377,11 +377,14 @@ function importTripFromHash() {
   history.replaceState(null, '', location.pathname);
   try {
     const trip = JSON.parse(unb64(m[1]));
-    if (!confirm(`Import a shared trip with ${trip.s.length} stops? It replaces your current route.`)) return;
-    const ids = trip.s.map(([name, lat, lng, address, notes]) => {
+    const extra = trip.x || [];
+    if (!confirm(`Import a shared trip with ${trip.s.length} stops${extra.length ? ` and ${extra.length} more places` : ''}? It replaces your current route.`)) return;
+    const upsert = ([name, lat, lng, address, notes]) => {
       const dup = state.places.find(p => Math.abs(p.lat - lat) < 1e-4 && Math.abs(p.lng - lng) < 1e-4);
       return dup ? dup.id : addPlace({ name, lat, lng, address, notes, source: { type: 'trip' } }).id;
-    });
+    };
+    extra.forEach(upsert);
+    const ids = trip.s.map(upsert);
     state.route = { ...state.route, profile: trip.p || 'car', stops: ids };
     save();
     showTab('route');
@@ -442,11 +445,26 @@ function showResults(items, onPick) {
       h('div', { class: 'muted small' }, [r.category, r.address].filter(Boolean).join(' · '))))));
 }
 
+// "Xingwen stone sea and caves" finds nothing; "Xingwen stone sea" or "Xingwen" might.
+async function searchLoose(q, signal) {
+  let words = q.split(/\s+/);
+  const cut = words.findIndex((w, i) => i > 0 && /^(and|with|&|\+|near|or)$/i.test(w));
+  const tries = [q];
+  if (cut > 0) tries.push(words.slice(0, cut).join(' '));
+  words = (cut > 0 ? words.slice(0, cut) : words);
+  for (let n = words.length - 1; n >= 1 && tries.length < 4; n--) tries.push(words.slice(0, n).join(' '));
+  for (const t of [...new Set(tries)]) {
+    const r = await api.search(t, map.getCenter(), { signal });
+    if (r.length) return r;
+  }
+  return [];
+}
+
 async function runSearch(q, render) {
   searchCtl?.abort();
   searchCtl = new AbortController();
   try {
-    render(await api.search(q, map.getCenter(), { signal: searchCtl.signal }));
+    render(await searchLoose(q, searchCtl.signal));
   } catch (e) {
     if (e.name !== 'AbortError') toast(`Search failed: ${e.message}`);
   }
@@ -459,7 +477,8 @@ function addFromResult(r, source = { type: 'search' }, thumb = null) {
   return p;
 }
 
-const looksLikeInput = v => /https?:\/\/|geo:|-?\d{1,2}\.\d{3,}\s*[, ]\s*-?\d{1,3}\.\d{3,}/i.test(v);
+// Links, coordinates and whole captions go to the import dialog; short text is a search.
+const looksLikeInput = v => /https?:\/\/|geo:|-?\d{1,2}\.\d{3,}\s*[, ]\s*-?\d{1,3}\.\d{3,}|\n/i.test(v) || v.length > 90;
 
 $('#q').addEventListener('input', e => {
   const v = e.target.value.trim();
@@ -535,6 +554,7 @@ async function handleIncoming({ title = '', text = '', url = '', files = [] }, t
     queries: info.queries,
     caption: [title, text].filter(Boolean).join(' ').replace(/https?:\/\/\S+/g, '').trim(),
     loading: true,
+    social: info.social,
   };
   openImport();
 
@@ -598,6 +618,11 @@ function openImport() {
     found.append(h('p', { class: 'muted small' }, 'No GPS in this file (apps often strip it). Search for the place below or pick it on the map.'));
   }
 
+  if (!p.loading && /instagram|facebook/.test(p.social || '') && !p.caption) {
+    found.append(h('p', { class: 'muted small' }, 'Instagram doesn’t let other apps read a post’s caption. Copy the caption (or the place name) and paste it into the search bar.'));
+  }
+  $('#import-all').hidden = p.queries.length < 2;
+  $('#import-all').textContent = `Add all ${p.queries.length}`;
   $('#import-chips').replaceChildren(...p.queries.map(q => h('button', { type: 'button', onclick: () => { $('#import-q').value = q; importSearch(q); } }, q)));
   const q = $('#import-q');
   if (!q.value && p.queries[0] && !p.coords) { q.value = p.queries[0]; importSearch(p.queries[0]); }
@@ -627,6 +652,31 @@ $('#import-q').addEventListener('input', e => {
   if (v) importTimer = setTimeout(() => importSearch(v), 400);
 });
 $('#import-q').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); importSearch(e.target.value.trim()); } });
+// One tap for a whole itinerary caption: take the best match for each suggestion.
+$('#import-all').onclick = async () => {
+  const p = pending;
+  if (!p) return;
+  const btn = $('#import-all');
+  btn.disabled = true;
+  const added = [], missed = [];
+  for (const [i, q] of p.queries.entries()) {
+    if (pending !== p) return;
+    btn.textContent = `Adding ${i + 1}/${p.queries.length}…`;
+    try {
+      const [r] = await searchLoose(q);
+      if (!r) { missed.push(q); continue; }
+      const dup = state.places.find(x => Math.abs(x.lat - r.lat) < 0.002 && Math.abs(x.lng - r.lng) < 0.002);
+      if (!dup) added.push(addPlace({ ...r, source: p.source, thumb: p.thumb }));
+    } catch { missed.push(q); }
+    await new Promise(res => setTimeout(res, 250)); // be gentle with the free geocoder
+  }
+  btn.disabled = false;
+  btn.textContent = `✓ Added ${added.length}`;
+  $('#import-chips').querySelectorAll('button').forEach(b => { if (!missed.includes(b.textContent)) b.classList.add('done'); });
+  toast(`Added ${added.length} places${missed.length ? ` · couldn’t find: ${missed.join(', ')}` : ''}`, 5000);
+  fitAll();
+};
+
 $('#import-pin').onclick = () => {
   const meta = { source: pending?.source, thumb: pending?.thumb };
   $('#dlg-import').close();

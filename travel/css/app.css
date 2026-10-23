@@ -197,6 +197,8 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
 .found { border: 1px solid var(--accent); border-radius: 10px; padding: 10px; margin: 8px 0; display: flex; gap: 8px; align-items: center; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
 .chips button { border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+.chips button.done { border-color: var(--accent); color: var(--accent); }
+#import-all { align-self: flex-start; margin-bottom: 6px; }
 .added { color: var(--accent); font-weight: 600; }
 
 .toast {
