@@ -70,3 +70,18 @@ test('social links are recognised', () => {
 test('typed place name becomes the query', () => {
   assert.deepEqual(analyseInput({ text: 'Blue Lagoon Iceland' }).queries[0], 'Blue Lagoon Iceland');
 });
+
+test('long itinerary caption yields every stop', () => {
+  const t = `1️⃣ Gansu + Qinghai
+I used Xining as my starting point and took high speed rail to Dunhuang, Zhangye and back to Xining then took bus to Xiahe then bus to Lanzhou then train to Longnan.
+
+Xining you can do a daytrip to Chaka Salt Lake & Qinghai lake.
+
+2️⃣ Xinjiang
+If already in Dunhuang, take high speed rail to Yumen Station and there's a direct 5.5-6h high speed rail to Urumqi 🚄`;
+  const q = analyseInput({ text: t }).queries;
+  for (const p of ['Xining', 'Dunhuang', 'Zhangye', 'Xiahe', 'Lanzhou', 'Longnan', 'Chaka Salt Lake', 'Qinghai Lake', 'Yumen Station', 'Urumqi', 'Xinjiang', 'Gansu']) {
+    assert.ok(q.includes(p), `${p} missing from ${q.join(' | ')}`);
+  }
+  assert.ok(!q.some(x => /^(If|I|Xining the)$/.test(x)), q.join(' | '));
+});

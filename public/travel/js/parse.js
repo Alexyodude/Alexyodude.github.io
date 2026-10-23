@@ -106,8 +106,17 @@ traveltiktok bucketlist`.split(/\s+/));
 
 const clean = s => s.replace(/[\s\-–—|:,.!?·•"“”'’()[\]]+$/g, '').replace(/^[\s\-–—|:,.!?·•"“”'’()[\]]+/g, '').trim();
 
+// Lowercase words that still belong to a place name: "Qinghai lake", "Xingwen stone sea".
+const GEO = 'lake|lakes|sea|river|mountain|mountains|mount|mt|peak|valley|canyon|gorge|cave|caves|falls|waterfall|island|islands|beach|bay|park|forest|desert|glacier|temple|monastery|shrine|palace|castle|old town|town|village|station|airport|market|street|bridge|tower|museum|square|grasslands?|salt lake|stone forest|stone sea|national park|scenic area';
+const NAME_WORD = String.raw`\p{Lu}[\p{L}'’\-]*`;
+const RUN = new RegExp(
+  String.raw`${NAME_WORD}(?:[ \t]+(?:(?:of|de|del|da|di|la|le|du|des)[ \t]+)?${NAME_WORD})*(?:[ \t]+(?:${GEO}))*`, 'gu');
+const LEAD = /\b(?:at|in|to|visit(?:ing|ed)?|near|from|via|around|towards?|reach(?:ed)?|explore|exploring|then)[ \t]+(?:the[ \t]+)?$/i;
+const titleCase = s => s.replace(/(^|\s)(\p{Ll})/gu, (m, sp, c) => (/^(of|de|del|da|di|la|le|du|des)$/.test(c) ? m : sp + c.toUpperCase()));
+
 // Pulls likely place names out of a caption/title, best guesses first.
-export function placeCandidates(text = '') {
+// Long captions ("Xining → Dunhuang → Zhangye…") yield many candidates.
+export function placeCandidates(text = '', max = 20) {
   const found = [];
   const add = (s, weight) => {
     s = clean(s || '');
@@ -115,7 +124,8 @@ export function placeCandidates(text = '') {
     if (STOP.has(s.toLowerCase())) return;
     const key = s.toLowerCase();
     const prev = found.find(f => f.key === key);
-    if (prev) prev.weight += weight; else found.push({ key, text: s, weight });
+    if (prev) { prev.weight += weight; if (/\p{Lu}/u.test(s) && s !== prev.text && /^\p{Ll}/u.test(prev.text)) prev.text = s; }
+    else found.push({ key, text: s, weight, order: found.length });
   };
 
   const body = text.replace(URL_RE, ' ');
@@ -123,19 +133,45 @@ export function placeCandidates(text = '') {
     // 📍 Name, City  /  Location: Name
     for (const m of line.matchAll(/(?:📍|📌|🗺️?|(?:location|address|where|place)\s*[:\-–])\s*([^\n#@|•]+)/gi)) add(m[1], 10);
   }
-  // "at Fushimi Inari", "in Kyoto, Japan"
-  for (const m of body.matchAll(/\b(?:at|in|to|visit(?:ing|ed)?|near|from)\s+((?:the\s+)?[A-Z][\p{L}'’.-]*(?:[\s,]+(?:de|del|da|di|la|le|of|the|&|[A-Z][\p{L}'’.-]*))*)/gu)) add(m[1].replace(/^the\s+/i, ''), 4);
+
+  for (const rawLine of body.split(/\n+/)) {
+    const line = rawLine.replace(/[\p{Extended_Pictographic}⃣️]+/gu, ' | ').replace(/^[\s|\d]+/, '');
+    // Short heading lines ("2️⃣ Xinjiang") are usually a place on their own.
+    const heading = line.trim();
+    if (heading && heading.split(/\s+/).length <= 4 && !/[.!?]$/.test(heading)) {
+      for (const part of heading.split(/\s*(?:\+|&|,|\/|\band\b)\s*/)) if (/^\p{Lu}/u.test(part)) add(titleCase(part), 2);
+    }
+    for (const m of line.matchAll(RUN)) {
+      const before = line.slice(0, m.index);
+      const sentenceStart = /(^|[.!?:;]\s*)$/.test(before.trimEnd() ? before : '') || !before.trim();
+      const name = titleCase(m[0]);
+      const words = name.split(/\s+/).length;
+      if (LEAD.test(before)) add(name, 4);
+      else if (!sentenceStart) add(name, words > 1 ? 2 : 1);
+      else if (words > 1) add(name, 1);
+      else add(name, 0); // sentence-initial single word: kept only if it shows up elsewhere
+    }
+  }
+
   // Hashtags: #KyotoJapan -> Kyoto Japan
   for (const m of body.matchAll(/#([\p{L}\p{N}_]{3,})/gu)) {
     const tag = m[1];
     if (STOP.has(tag.toLowerCase())) continue;
     add(tag.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^\p{Ll}/u, c => c.toUpperCase()), 2);
   }
-  // Runs of Capitalised Words that aren't the start of a sentence.
-  for (const m of body.matchAll(/(?:^|[^.!?\n]\s)((?:[A-Z][\p{L}'’-]+)(?:\s+(?:de|del|la|of|the|[A-Z][\p{L}'’-]+)){1,4})/gu)) add(m[1], 1);
 
-  return found.sort((a, b) => b.weight - a.weight).map(f => f.text).slice(0, 8);
+  return found
+    .filter(f => f.weight > 0 && !COMMON.has(f.key))
+    .sort((a, b) => b.weight - a.weight || a.order - b.order)
+    .map(f => f.text)
+    .slice(0, max);
 }
+
+// Capitalised words that start sentences but aren't places.
+const COMMON = new Set(`i if you we he she they it few most many some all every renting totally beautiful just note
+also then there here this that these those my our your so but and or because when where while after before
+during day night morning evening high speed rail train bus car flight tour group station hotel highly
+definitely honestly worth must best great amazing perfect`.split(/\s+/));
 
 const SOCIAL = [
   ['youtube', /(^|\.)(youtube\.com|youtu\.be)$/],
@@ -190,7 +226,7 @@ export function analyseInput({ title = '', text = '', url = '' } = {}) {
   return {
     coords,
     name: name || (mapLink && lines[0]) || null,
-    queries: [...new Set(queries.map(q => q.trim()).filter(Boolean))].slice(0, 8),
+    queries: [...new Set(queries.map(q => q.trim()).filter(Boolean))].slice(0, 20),
     urls,
     social,
   };
