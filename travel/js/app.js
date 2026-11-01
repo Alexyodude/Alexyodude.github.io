@@ -211,7 +211,11 @@ function renderStops() {
       h('span', { class: 'letter' }, LETTERS(i)),
       h('button', { class: 'main', type: 'button', onclick: () => focusPlace(p) },
         h('div', { class: 'title' }, p.name),
-        h('div', { class: 'sub' }, i === 0 ? 'Start' : i === stops.length - 1 ? 'Destination' : p.address || p.category)),
+        h('div', { class: 'sub' }, i === 0 ? 'Start' : i === stops.length - 1 ? 'Destination' : p.address || p.category),
+        // Itinerary: the days spent at this stop and what to do there (route.plan, keyed by place id).
+        state.route.plan?.[p.id] && h('div', { class: 'plan' },
+          h('span', { class: 'days' }, `${/\D/.test(state.route.plan[p.id].days) ? 'Days' : 'Day'} ${state.route.plan[p.id].days.replace('-', '–')}`),
+          ' ', state.route.plan[p.id].what)),
       h('span', { class: 'tools' },
         h('button', { type: 'button', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => moveStop(i, i - 1) }, '↑'),
         h('button', { type: 'button', title: 'Move down', 'aria-label': 'Move down', disabled: i === stops.length - 1, onclick: () => moveStop(i, i + 1) }, '↓'),
@@ -363,6 +367,9 @@ const unb64 = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g,
 
 $('#btn-share-route').onclick = async () => {
   const trip = { p: state.route.profile, s: stopPlaces().map(p => [p.name, +p.lat.toFixed(5), +p.lng.toFixed(5), p.address || '', p.notes || '']) };
+  // d: each stop's itinerary [days, what], 0 where a stop has none; left out when no stop has one.
+  const plan = state.route.plan || {};
+  if (state.route.stops.some(id => plan[id])) trip.d = stopPlaces().map(p => plan[p.id] ? [plan[p.id].days, plan[p.id].what] : 0);
   const url = `${location.origin}${location.pathname}#trip=${b64(JSON.stringify(trip))}`;
   const title = `Trip: ${trip.s.map(s => s[0]).join(' → ')}`.slice(0, 120);
   try {
@@ -385,7 +392,9 @@ function importTripFromHash() {
     };
     extra.forEach(upsert);
     const ids = trip.s.map(upsert);
-    state.route = { ...state.route, profile: trip.p || 'car', stops: ids };
+    const plan = {};
+    (trip.d || []).forEach((d, k) => { if (Array.isArray(d) && ids[k]) plan[ids[k]] = { days: String(d[0]), what: String(d[1] || '') }; });
+    state.route = { ...state.route, profile: trip.p || 'car', stops: ids, plan };
     save();
     showTab('route');
     fitAll();

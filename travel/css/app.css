@@ -147,6 +147,8 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
 .list .main { flex: 1; min-width: 0; cursor: pointer; background: none; border: 0; padding: 0; text-align: left; display: block; }
 .list .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list .sub { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list .plan { font-size: 13px; line-height: 1.35; margin-top: 3px; white-space: normal; }
+.list .plan .days { font-weight: 600; white-space: nowrap; }
 .list.compact > li { padding: 6px 2px; }
 .thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex: none; background: var(--bg-2); display: grid; place-items: center; font-size: 20px; }
 .thumb-lg { width: 100%; max-height: 180px; object-fit: cover; border-radius: 10px; }
