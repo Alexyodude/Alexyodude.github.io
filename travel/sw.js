@@ -1,5 +1,5 @@
-// App shell cache + Android share-target receiver.
-const VERSION = 'wayfinder-v6';
+﻿// App shell cache + Android share-target receiver.
+const VERSION = 'wayfinder-v8';
 const SHELL = [
   './',
   'index.html',
@@ -10,6 +10,7 @@ const SHELL = [
   'js/media.js',
   'js/plan.js',
   'js/services.js',
+  'js/wiki.js',
   'vendor/leaflet/leaflet.js',
   'vendor/leaflet/leaflet.css',
   'manifest.webmanifest',
