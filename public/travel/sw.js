@@ -1,5 +1,5 @@
 ﻿// App shell cache + Android share-target receiver.
-const VERSION = 'wayfinder-v8';
+const VERSION = 'wayfinder-v9';
 const SHELL = [
   './',
   'index.html',
@@ -54,10 +54,13 @@ self.addEventListener('fetch', e => {
   }
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
 
-  // Network first so deploys show up straight away; cache when offline.
+  // Network first so deploys show up straight away; cache when offline. 'no-cache'
+  // revalidates with the server: without it the browser's HTTP cache (10 min on
+  // GitHub Pages) can hand back old modules beside new ones, and a new app.js
+  // importing from an old store.js breaks.
   e.respondWith((async () => {
     try {
-      const res = await fetch(e.request);
+      const res = await fetch(e.request, { cache: 'no-cache' });
       if (res.ok) (await caches.open(VERSION)).put(e.request, res.clone());
       return res;
     } catch {
