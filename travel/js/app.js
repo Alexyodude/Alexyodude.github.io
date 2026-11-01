@@ -172,12 +172,28 @@ const routeLayer = L.layerGroup().addTo(map);
 const suggestLayer = L.layerGroup().addTo(map);
 let lastRoute = null;
 
+const escHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+// A marker is the place's photo in a ring (its emoji when it has none), with a
+// pointer to the spot: amber ring for saved places, blue ring and a letter badge
+// for route stops. Big and high-contrast so it reads on any map layer.
 function pinIcon(p) {
   const idx = state.route.stops.indexOf(p.id);
-  const cls = idx >= 0 ? 'pin stop' : 'pin';
-  const inner = idx >= 0 ? LETTERS(idx) : emojiFor(p);
-  return L.divIcon({ className: '', html: `<div class="${cls}"><span>${inner}</span></div>`, iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] });
+  const stop = idx >= 0;
+  // The photo is the circle's background, not an <img>: Leaflet's stylesheet forces
+  // marker-pane images to their natural size and absolute position (huge smears).
+  const face = p.thumb
+    ? `<span class="ph" style="background-image:url(&quot;${escHtml(encodeURI(decodeURI(p.thumb)))}&quot;)"></span>`
+    : `<span class="emoji">${emojiFor(p)}</span>`;
+  const badge = stop ? `<b class="badge">${LETTERS(idx)}</b>` : '';
+  return L.divIcon({
+    className: '', html: `<div class="mk${stop ? ' stop' : ''}" title="${escHtml(p.name)}">${face}${badge}</div>`,
+    iconSize: [46, 54], iconAnchor: [23, 54], popupAnchor: [0, -52],
+  });
 }
+// Far out, a country's worth of photo markers would bury the map: shrink them.
+map.on('zoomend', () => map.getContainer().classList.toggle('far', map.getZoom() < 6));
+map.whenReady(() => map.getContainer().classList.toggle('far', map.getZoom() < 6));
 
 // Links a place carries: [{title, url}] (sources: Wikipedia, the photo, the reel,
 // who suggested it), else just its original post.
@@ -610,7 +626,43 @@ $('#btn-share-route').onclick = async () => {
   } catch { /* cancelled */ }
 };
 
+// #import=<url>: load a whole backup (places, route, route options) from a link, so a
+// trip prepared elsewhere reaches a phone in one tap. Only GitHub-hosted raw files
+// (a gist) are accepted, so a crafted link can't point the app at arbitrary sites.
+const IMPORT_HOSTS = ['gist.githubusercontent.com', 'raw.githubusercontent.com'];
+async function importBackupFromHash() {
+  const m = location.hash.match(/#import=(.+)$/);
+  if (!m) return false;
+  history.replaceState(null, '', location.pathname);
+  let url;
+  try { url = new URL(decodeURIComponent(m[1])); } catch { toast('That import link is damaged'); return true; }
+  if (url.protocol !== 'https:' || !IMPORT_HOSTS.includes(url.hostname)) {
+    toast(`Import links must point to a GitHub gist, not ${url.hostname}`, 5000);
+    return true;
+  }
+  try {
+    toast('Loading the trip…', 15000);
+    const r = await fetch(url, { cache: 'no-cache' });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const data = await r.json();
+    if (!Array.isArray(data.places)) throw new Error('no places in the file');
+    const options = Object.keys(data.routeOptions || {}).length;
+    const name = data.route?.name ? `“${data.route.name}”` : 'the trip';
+    if (!confirm(`Load ${name}: ${data.places.length} places${options ? ` and ${options + 1} route options` : ''}? It replaces what's saved on this device.`)) {
+      toast('Not loaded'); return true;
+    }
+    replaceAll(data);
+    showTab('route');
+    fitAll();
+    toast(`Loaded ${data.places.length} places${options ? ` · ${options + 1} route options` : ''}`, 4000);
+  } catch (err) {
+    toast(`Couldn't load the trip (${err.message})`, 6000);
+  }
+  return true;
+}
+
 function importTripFromHash() {
+  if (/#import=/.test(location.hash)) { importBackupFromHash(); return; }
   const m = location.hash.match(/#trip=([\w-]+)/);
   if (!m) return;
   history.replaceState(null, '', location.pathname);

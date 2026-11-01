@@ -276,7 +276,34 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
 }
 .pop-info.open { display: block; -webkit-line-clamp: unset; line-clamp: none; }
 .pop-tip { margin: 6px 0 0; font-size: 13px; padding: 6px 8px; border-radius: 6px; background: var(--tip-bg); border-left: 3px solid var(--tip-line); }
+/* Photo markers: a 44px photo (or emoji) in a white border and a coloured ring, with a
+   pointer down to the spot. Amber ring = saved place, blue ring + letter = route stop. */
+.mk {
+  --ring: #d97706;
+  position: relative; width: 44px; height: 44px; border-radius: 50%;
+  background: #fff; border: 3px solid #fff;
+  box-shadow: 0 0 0 3px var(--ring), 0 4px 10px rgb(0 0 0 / .5);
+  display: grid; place-items: center; transform-origin: 50% 120%;
+  transition: transform .15s;
+}
+.mk::after { /* pointer */
+  content: ''; position: absolute; left: 50%; bottom: -12px; transform: translateX(-50%);
+  border: 7px solid transparent; border-top: 8px solid var(--ring);
+}
+.mk .ph { width: 100%; height: 100%; border-radius: 50%; background: #e2e8f0 center / cover no-repeat; display: block; }
+.mk .emoji { font-size: 22px; line-height: 1; }
+.mk.stop { --ring: #1d4ed8; }
+.mk .badge {
+  position: absolute; top: -9px; right: -11px; min-width: 22px; height: 22px; padding: 0 5px;
+  border-radius: 11px; background: #1d4ed8; color: #fff; border: 2px solid #fff;
+  font: 700 12px/18px system-ui, sans-serif; text-align: center; box-shadow: 0 1px 4px rgb(0 0 0 / .4);
+}
+.leaflet-marker-icon:hover .mk { transform: scale(1.12); z-index: 1; }
+.far .mk { transform: scale(.72); }
+.far .leaflet-marker-icon:hover .mk { transform: scale(.9); }
 /* A marker being moved: lifted and pulsing, so it is clear which one is unlocked. */
+.leaflet-marker-icon.moving .mk { box-shadow: 0 0 0 4px var(--accent), 0 6px 14px rgb(0 0 0 / .45); animation: mk-pulse 1.2s ease-in-out infinite; }
+@keyframes mk-pulse { 50% { box-shadow: 0 0 0 10px rgb(59 130 246 / .35), 0 6px 14px rgb(0 0 0 / .45); } }
 .leaflet-marker-icon.moving .pin { box-shadow: 0 0 0 4px var(--accent), 0 6px 14px rgb(0 0 0 / .4); animation: pin-pulse 1.2s ease-in-out infinite; }
 @keyframes pin-pulse { 50% { box-shadow: 0 0 0 9px rgb(59 130 246 / .35), 0 6px 14px rgb(0 0 0 / .4); } }
 .move-bar {
