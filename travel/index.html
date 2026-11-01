@@ -32,6 +32,7 @@
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="places" aria-selected="true">Places <span id="count" class="badge">0</span></button>
       <button role="tab" data-tab="route" aria-selected="false">Route <span id="stop-count" class="badge">0</span></button>
+      <button role="tab" data-tab="schedule" aria-selected="false">Schedule</button>
     </nav>
 
     <div class="tab" id="tab-places">
@@ -91,6 +92,11 @@
         <button type="button" id="btn-gpx">GPX</button>
         <button type="button" id="btn-share-route">Share trip</button>
       </div>
+    </div>
+    <div class="tab" id="tab-schedule" hidden>
+      <div id="sched-legend" class="sched-legend"></div>
+      <div id="sched" class="sched"></div>
+      <p id="sched-empty" class="empty">This route has no schedule yet.</p>
     </div>
   </section>
 

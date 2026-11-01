@@ -186,8 +186,10 @@ function pinIcon(p) {
     ? `<span class="ph" style="background-image:url(&quot;${escHtml(encodeURI(decodeURI(p.thumb)))}&quot;)"></span>`
     : `<span class="emoji">${emojiFor(p)}</span>`;
   const badge = stop ? `<b class="badge">${LETTERS(idx)}</b>` : '';
+  const nights = stop ? state.route.plan?.[p.id]?.nights : 0;
+  const bed = nights > 0 ? `<i class="zz" title="${nights} night${nights === 1 ? '' : 's'} here">🛏️${nights}</i>` : '';
   return L.divIcon({
-    className: '', html: `<div class="mk${stop ? ' stop' : ''}" title="${escHtml(p.name)}">${face}${badge}</div>`,
+    className: '', html: `<div class="mk${stop ? ' stop' : ''}" title="${escHtml(p.name)}">${face}${badge}${bed}</div>`,
     iconSize: [46, 54], iconAnchor: [23, 54], popupAnchor: [0, -52],
   });
 }
@@ -354,7 +356,11 @@ function showTab(name) {
   document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === name));
   $('#tab-places').hidden = name !== 'places';
   $('#tab-route').hidden = name !== 'route';
-  if ($('#panel').dataset.size === 'min') setPanel('half');
+  $('#tab-schedule').hidden = name !== 'schedule';
+  $('#panel').classList.toggle('wide', name === 'schedule');
+  // The day grid needs the room: open the sheet all the way on a phone.
+  if (name === 'schedule' && innerWidth < 900) setPanel('full');
+  else if ($('#panel').dataset.size === 'min') setPanel('half');
 }
 document.querySelectorAll('.tabs button').forEach(b => { b.onclick = () => showTab(b.dataset.tab); });
 
@@ -430,7 +436,8 @@ function renderStops() {
         // Itinerary: the days spent at this stop and what to do there (route.plan, keyed by place id).
         state.route.plan?.[p.id] && h('div', { class: 'plan' },
           h('span', { class: 'days' }, `${/\D/.test(state.route.plan[p.id].days) ? 'Days' : 'Day'} ${state.route.plan[p.id].days.replace('-', '–')}`),
-          ' ', state.route.plan[p.id].what)),
+          ' ', state.route.plan[p.id].what),
+        state.route.plan?.[p.id]?.nights > 0 && h('div', { class: 'sleep' }, nightsLabel(state.route.plan[p.id].nights))),
       h('span', { class: 'tools' },
         h('button', { type: 'button', title: 'Move up', 'aria-label': 'Move up', disabled: i === 0, onclick: () => moveStop(i, i - 1) }, '↑'),
         h('button', { type: 'button', title: 'Move down', 'aria-label': 'Move down', disabled: i === stops.length - 1, onclick: () => moveStop(i, i + 1) }, '↓'),
@@ -446,7 +453,9 @@ function renderStops() {
     if (i < stops.length - 1) {
       // Train and bus options between this stop and the next, from Rome2rio's route search.
       const city = q => encodeURIComponent(q.name.replace(/\s*\(.*\)$/, ''));
+      const overnight = state.route.plan?.[stops[i + 1].id]?.legNight;
       items.push(h('li', { class: 'leg' },
+        overnight && h('span', { class: 'sleep-leg-chip' }, `🛏️🚌 Overnight ${overnight}`),
         leg ? `↓ ${fmtDistance(leg.distance)} · ${fmtDuration(leg.duration)} by road · ` : '↓ ',
         h('a', { href: `https://www.rome2rio.com/map/${city(p)}/${city(stops[i + 1])}`, target: '_blank', rel: 'noopener' },
           '🚆🚌 Find trains & buses')));
@@ -546,6 +555,7 @@ async function computeRoute() {
     line.on('click', e => addStopOnLine(e.latlng));
     line.bindTooltip('Tap to add a stop here', { sticky: true });
     routeLayer.addLayer(line);
+    addSleepLegMarkers(stops);
     $('#summary').replaceChildren(`${fmtDistance(r.distance)} · ${fmtDuration(r.duration)} `, h('span', { class: 'muted' }, `· ${stops.length} stops`));
     $('#steps').replaceChildren(...r.legs.flatMap((leg, i) => [
       h('li', { class: 'stop-h' }, `${LETTERS(i)} → ${LETTERS(i + 1)}  ${stops[i + 1].name}`),
@@ -556,9 +566,25 @@ async function computeRoute() {
     lastRoute = null;
     routeKey = '';
     routeLayer.addLayer(L.polyline(stops.map(p => [p.lat, p.lng]), { color: '#888', dashArray: '6 8', weight: 3 }));
+    addSleepLegMarkers(stops);
     $('#summary').replaceChildren(h('span', { class: 'muted' }, `Couldn’t get a route (${e.message}). Showing straight lines.`));
   }
   renderStops();
+}
+
+/* Where you sleep: nights per stop (route.plan[id].nights) and overnight rides
+   (route.plan[id].legNight, set on the stop the ride arrives at). */
+const nightsLabel = n => `🛏️ ${n} night${n === 1 ? '' : 's'}`;
+function addSleepLegMarkers(stops) {
+  stops.forEach((p, i) => {
+    const how = i > 0 && state.route.plan?.[p.id]?.legNight;
+    if (!how) return;
+    const a = stops[i - 1];
+    routeLayer.addLayer(L.marker([(a.lat + p.lat) / 2, (a.lng + p.lng) / 2], {
+      interactive: true, keyboard: false,
+      icon: L.divIcon({ className: '', html: '<div class="sleep-leg" aria-hidden="true">🛏️🚌</div>', iconSize: [48, 30], iconAnchor: [24, 15] }),
+    }).bindTooltip(`Night on the ${how}: ${a.name} → ${p.name}`, { direction: 'top' }));
+  });
 }
 
 async function addStopOnLine(latlng) {
@@ -1029,6 +1055,65 @@ async function readShareInbox() {
   }
 }
 
+/* ---------------- Schedule ----------------
+   route.schedule: [{ day, start: 'HH:MM', end: 'HH:MM', kind, title, place? }], one column per trip day.
+   Each day is labelled with its base (the stop whose plan.days range holds it) and where you sleep. */
+
+const SCHED_FROM = 4, SCHED_TO = 24, HOUR_PX = 44;
+const KINDS = { travel: 'Travel', sight: 'Sight', nature: 'Nature', food: 'Food', rest: 'Rest' };
+const toMin = t => { const [hh, mm] = String(t).split(':').map(Number); return hh * 60 + (mm || 0); };
+const schedY = t => (Math.min(Math.max(toMin(t), SCHED_FROM * 60), SCHED_TO * 60) - SCHED_FROM * 60) * HOUR_PX / 60;
+
+// Day n → { base, sleep: '🛏️' | '🛏️🚌' | '' } from route.plan.
+function dayInfo(n) {
+  const stops = state.route.stops.map(byId).filter(Boolean);
+  const plan = state.route.plan || {};
+  let base = null, sleep = '';
+  stops.forEach((p, i) => {
+    const [a, b = a] = String(plan[p.id]?.days || '').split('-').map(Number);
+    if (!(n >= a && n <= b)) return;
+    base = p;
+    if (n - a < (plan[p.id].nights || 0)) sleep = '🛏️';
+    if (plan[stops[i + 1]?.id]?.legNight && n === b) sleep = '🛏️🚌';
+  });
+  return { base, sleep };
+}
+
+$('#sched-legend').replaceChildren(...Object.entries(KINDS).map(([k, v]) => h('span', { class: `sk k-${k}` }, v)));
+
+function renderSchedule() {
+  const blocks = Array.isArray(state.route.schedule) ? state.route.schedule : [];
+  $('#sched-empty').hidden = blocks.length > 0;
+  $('#sched-legend').hidden = $('#sched').hidden = !blocks.length;
+  if (!blocks.length) return $('#sched').replaceChildren();
+  const days = Math.max(...blocks.map(b => +b.day || 1));
+  const hours = [];
+  for (let t = SCHED_FROM; t < SCHED_TO; t++) hours.push(h('span', { style: `top:${(t - SCHED_FROM) * HOUR_PX}px` }, `${String(t).padStart(2, '0')}:00`));
+  const cols = [];
+  for (let d = 1; d <= days; d++) {
+    const { base, sleep } = dayInfo(d);
+    cols.push(h('div', { class: 'sd-head', style: `grid-column:${d + 1}` },
+      h('b', {}, `Day ${d}`), base && ` · ${base.name}`, sleep && ` · ${sleep}`));
+    cols.push(h('div', { class: 'sd-col', style: `grid-column:${d + 1}` },
+      blocks.filter(b => +b.day === d).map(b => {
+        const top = schedY(b.start), height = Math.max(schedY(b.end) - top, 14);
+        return h('button', {
+          type: 'button', class: `sb k-${KINDS[b.kind] ? b.kind : 'rest'}`, style: `top:${top}px;height:${height}px`,
+          title: `${b.start}–${b.end} ${b.title}`, onclick: () => openBlock(b),
+        }, h('span', {}, `${b.start}–${b.end}`), h('b', {}, b.title)); // time first: it stays visible when a short block clips the title
+      })));
+  }
+  $('#sched').replaceChildren(h('div', { class: 'sched-grid', style: `--days:${days};--hours:${SCHED_TO - SCHED_FROM}` },
+    h('div', { class: 'sd-corner' }), h('div', { class: 'sd-times' }, hours), cols));
+}
+
+function openBlock(b) {
+  const name = String(b.place || '').toLowerCase();
+  const p = name && state.places.find(x => x.name.toLowerCase() === name);
+  if (p) focusPlace(p);
+  else toast(`Day ${b.day}, ${b.start}–${b.end}: ${b.title}`, 4500);
+}
+
 /* ---------------- Backup ---------------- */
 
 $('#btn-export').onclick = () => download(`wayfinder-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify(state, null, 2));
@@ -1054,8 +1139,9 @@ $('#btn-howto').onclick = () => {
 
 /* ---------------- Boot ---------------- */
 
-subscribe(() => { renderPlaces(); renderMarkers(); renderStops(); scheduleRoute(); });
+subscribe(() => { renderPlaces(); renderMarkers(); renderStops(); renderSchedule(); scheduleRoute(); });
 renderPlaces();
+renderSchedule();
 renderMarkers();
 renderStops();
 scheduleRoute();
