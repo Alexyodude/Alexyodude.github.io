@@ -51,6 +51,12 @@
     </div>
 
     <div class="tab" id="tab-route" hidden>
+      <div class="row opt-row">
+        <select id="route-option" aria-label="Route option"></select>
+        <button type="button" id="btn-opt-save" title="Save the current route as a new option">＋ Save as option</button>
+        <button type="button" id="btn-opt-delete" class="link danger" title="Delete this route option">Delete option</button>
+      </div>
+      <p id="route-summary" class="opt-summary" hidden></p>
       <div class="seg" role="radiogroup" aria-label="Travel mode">
         <button data-profile="car" role="radio">🚗 Drive</button>
         <button data-profile="bike" role="radio">🚲 Bike</button>

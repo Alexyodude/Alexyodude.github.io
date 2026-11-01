@@ -1,8 +1,9 @@
-import { state, save, subscribe, addPlace, updatePlace, removePlace, replaceAll, byId } from './store.js';
+import { state, save, subscribe, addPlace, updatePlace, removePlace, replaceAll, byId, today, routeName, routeNames, saveRouteAs, switchRoute, deleteRoute } from './store.js';
 import { analyseInput, placeCandidates } from './parse.js';
 import { analyseMedia } from './media.js';
 import * as api from './services.js';
 import { bestInsertIndex, optimizeOrder, distMatrix, fmtDistance, fmtDuration, googleMapsUrl, toGpx } from './plan.js';
+import { wikiFor } from './wiki.js';
 
 const $ = s => document.querySelector(s);
 const h = (tag, attrs = {}, ...kids) => {
@@ -35,6 +36,30 @@ const EMOJI = [
 ];
 const emojiFor = p => (EMOJI.find(([re]) => re.test((p.category || '').toLowerCase())) || [, '📍'])[1];
 const SOURCE_ICON = { search: '🔎', link: '🔗', video: '🎬', photo: '🖼️', share: '📤', pin: '📍', trip: '🧭' };
+
+// Who suggested a place and where: p.provenance { kind, by, via, url, date, note }, else its source.
+const PROV_ICON = { reel: '🎬', friend: '💬', web: '🌐', map: '🗺️', self: '✍️' };
+function provOf(p) {
+  if (p.provenance) return { ...p.provenance, icon: PROV_ICON[p.provenance.kind] || '📍' };
+  const src = p.source || {};
+  return { icon: SOURCE_ICON[src.type] || '', via: src.title || src.type || 'search', url: src.url, date: p.createdAt?.slice(0, 10) };
+}
+const fmtDay = iso => {
+  const d = new Date(`${String(iso).slice(0, 10)}T00:00`);
+  return isNaN(d) ? String(iso) : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+};
+// "🎬 by @x via Instagram reel · 23 Oct", by/via linking to the url; prefix e.g. 'Suggested', withNote adds the note.
+function provLine(p, { prefix = '', withNote = false } = {}) {
+  const v = provOf(p);
+  const link = text => v.url ? h('a', { href: v.url, target: '_blank', rel: 'noopener' }, text) : text;
+  return h('div', { class: 'prov', title: v.note || null },
+    `${v.icon} ${prefix}`.trimEnd() + ' ',
+    v.by && ['by ', link(v.by), ' '],
+    v.via && ['via ', v.by ? v.via : link(v.via)],
+    v.date && ` · ${fmtDay(v.date)}`,
+    withNote && v.note && ` — ${v.note}`);
+}
+const provText = p => p.provenance ? [p.provenance.by, p.provenance.via, p.provenance.note].filter(Boolean).join(' ') : '';
 
 /* ---------------- Map ---------------- */
 
@@ -117,8 +142,9 @@ async function loadStations() {
         h('div', { class: 'row' },
           h('a', { href: `https://www.openstreetmap.org/${s.osm}`, target: '_blank', rel: 'noopener' }, 'OpenStreetMap'),
           h('button', { type: 'button', onclick: () => {
+            const url = `https://www.openstreetmap.org/${s.osm}`;
             addPlace({ name: s.name, lat: s.lat, lng: s.lng, address: s.local, category: s.kind === 'bus' ? 'bus station' : 'train station',
-              source: { type: 'search', url: `https://www.openstreetmap.org/${s.osm}` } });
+              source: { type: 'search', url }, provenance: { kind: 'map', via: 'station map', url, date: today() } });
             map.closePopup(); toast(`Saved “${s.name}”`);
           } }, 'Save place')))).addTo(stationLayer);
     }
@@ -172,14 +198,87 @@ function popupFor(p) {
     p.thumb && h('img', { class: 'pop-img', src: p.thumb, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }),
     h('b', {}, p.name),
     p.address && h('div', { class: 'muted small' }, p.address),
+    provLine(p, { prefix: 'Suggested', withNote: true }),
     plan && h('div', { class: 'pop-plan' }, h('strong', {}, `${/\D/.test(plan.days) ? 'Days' : 'Day'} ${plan.days.replace('-', '–')}: `), plan.what),
     // Clamped to a few lines so the tip, sources and buttons stay in view; tap to read it all.
     p.info && h('p', { class: 'pop-info', title: 'Tap to read more', onclick: e => e.currentTarget.classList.toggle('open') }, p.info),
     p.notes && h('p', { class: 'pop-tip' }, p.notes),
     linkList(p),
+    !p.info && !p.wikiChecked && h('p', { class: 'muted small' }, 'Looking up a photo and info…'),
     h('div', { class: 'row' },
       h('button', { type: 'button', onclick: () => openEdit(p.id) }, 'Edit'),
-      h('button', { type: 'button', onclick: () => { toggleStop(p.id); map.closePopup(); } }, inRoute ? 'Remove from route' : 'Add to route')));
+      h('button', { type: 'button', onclick: () => { toggleStop(p.id); map.closePopup(); } }, inRoute ? 'Remove from route' : 'Add to route'),
+      h('button', { type: 'button', onclick: () => startMove(p.id) }, '✥ Move marker')));
+}
+
+/* Markers are locked; "Move marker" unlocks one, and the move only sticks once saved. */
+let moving = null; // { id, from: LatLng }
+function startMove(id) {
+  if (moving) endMove(false);
+  const m = markers.get(id);
+  map.closePopup();
+  moving = { id, from: m.getLatLng() };
+  m.dragging.enable();
+  m.getElement()?.classList.add('moving');
+  moveBar('Drag the marker to its new spot', false);
+}
+function endMove(keep) {
+  if (!moving) return;
+  const { id, from } = moving;
+  const m = markers.get(id);
+  moving = null;
+  m?.dragging.disable();
+  m?.getElement()?.classList.remove('moving');
+  $('#move-bar')?.remove();
+  if (!m || !byId(id)) return;
+  if (keep) {
+    const ll = m.getLatLng();
+    updatePlace(id, { lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6) });
+    toast(`Saved the new location of “${byId(id).name}”`);
+  } else {
+    m.setLatLng(from);
+  }
+}
+function moveBar(text, dropped) {
+  $('#move-bar')?.remove();
+  document.body.append(h('div', { id: 'move-bar', class: 'move-bar', role: 'dialog', 'aria-label': 'Move marker' },
+    h('span', {}, text),
+    dropped && h('button', { type: 'button', class: 'primary', onclick: () => endMove(true) }, 'Save'),
+    h('button', { type: 'button', onclick: () => endMove(false) }, dropped ? 'Cancel' : 'Cancel move')));
+}
+addEventListener('keydown', e => { if (e.key === 'Escape' && moving) endMove(false); });
+
+/* Photo, description and sources from Wikipedia for places saved without them, so
+   every marker has them on any device. One lookup at a time, paced for Wikipedia;
+   the result (or "nothing found") is saved, so each place is looked up once. */
+const wikiQueue = [];
+let wikiBusy = false;
+function wantWiki(p) { return p && !p.info && !p.wikiChecked; }
+function queueWiki(id, first = false) {
+  if (!wantWiki(byId(id)) || wikiQueue.includes(id)) return;
+  first ? wikiQueue.unshift(id) : wikiQueue.push(id);
+  if (!wikiBusy) runWiki();
+}
+async function runWiki() {
+  wikiBusy = true;
+  while (wikiQueue.length) {
+    const id = wikiQueue.shift();
+    const p = byId(id);
+    if (!wantWiki(p)) continue;
+    try {
+      const w = await wikiFor(p);
+      const known = new Set((p.links || []).map(l => l.url));
+      updatePlace(id, w
+        ? { info: w.info, thumb: p.thumb || w.thumb, links: [...w.links.filter(l => !known.has(l.url)), ...(p.links || linksOf(p))], wikiChecked: today() }
+        : { wikiChecked: today() });
+      const m = markers.get(id);
+      if (m?.isPopupOpen()) m.getPopup().setContent(popupFor(byId(id)));
+    } catch (err) {
+      console.warn(`Wikipedia lookup for ${p.name} failed: ${err.message}`); // retried next visit
+    }
+    await new Promise(r => setTimeout(r, 1200));
+  }
+  wikiBusy = false;
 }
 
 function renderMarkers() {
@@ -188,15 +287,12 @@ function renderMarkers() {
     seen.add(p.id);
     let m = markers.get(p.id);
     if (!m) {
-      m = L.marker([p.lat, p.lng], { draggable: true, autoPan: true }).addTo(map);
-      m.on('dragend', () => {
-        const ll = m.getLatLng();
-        updatePlace(p.id, { lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6) });
-        toast(`Moved “${byId(p.id).name}”`);
-      });
+      m = L.marker([p.lat, p.lng], { draggable: false, autoPan: true }).addTo(map);
+      m.on('dragend', () => { if (moving?.id === p.id) moveBar('Save the new location?', true); });
+      m.on('popupopen', () => queueWiki(p.id, true));
       markers.set(p.id, m);
     }
-    m.setLatLng([p.lat, p.lng]);
+    if (moving?.id !== p.id) m.setLatLng([p.lat, p.lng]);
     m.setIcon(pinIcon(p));
     // Keep popups clear of the search bar (top) and, on phones, of the shrunk bottom panel.
     m.bindPopup(() => popupFor(byId(p.id)), {
@@ -205,6 +301,7 @@ function renderMarkers() {
     });
   }
   for (const [id, m] of markers) if (!seen.has(id)) { m.remove(); markers.delete(id); }
+  for (const p of state.places) if (wantWiki(p)) queueWiki(p.id);
 }
 
 function focusPlace(p, open = true) {
@@ -253,16 +350,19 @@ function thumbEl(p) {
 
 function renderPlaces() {
   const f = $('#filter').value.trim().toLowerCase();
-  const list = state.places.filter(p => !f || `${p.name} ${p.address} ${p.category} ${p.notes}`.toLowerCase().includes(f));
+  const list = state.places.filter(p => !f || `${p.name} ${p.address} ${p.category} ${p.notes} ${provText(p)}`.toLowerCase().includes(f));
   $('#count').textContent = state.places.length;
   $('#places-empty').hidden = state.places.length > 0;
   $('#places').replaceChildren(...list.map(p => {
     const inRoute = state.route.stops.includes(p.id);
     return h('li', {},
       thumbEl(p),
-      h('button', { class: 'main', type: 'button', onclick: () => focusPlace(p) },
-        h('div', { class: 'title' }, p.name),
-        h('div', { class: 'sub' }, `${SOURCE_ICON[p.source?.type] || ''} ${p.address || p.category || ''}`)),
+      // A div, not a button, so the provenance links under it can be tapped.
+      h('div', { class: 'main' },
+        h('button', { class: 'open', type: 'button', onclick: () => focusPlace(p) },
+          h('div', { class: 'title' }, p.name),
+          h('div', { class: 'sub' }, `${SOURCE_ICON[p.source?.type] || ''} ${p.address || p.category || ''}`)),
+        provLine(p)),
       h('button', { type: 'button', class: inRoute ? 'in-route' : '', title: inRoute ? 'Remove from route' : 'Add to route', onclick: () => toggleStop(p.id) },
         inRoute ? `✓ ${LETTERS(state.route.stops.indexOf(p.id))}` : '+ Route'),
       h('button', { type: 'button', class: 'icon', title: 'Edit', 'aria-label': `Edit ${p.name}`, onclick: () => openEdit(p.id) }, '✎'));
@@ -301,6 +401,7 @@ function renderStops() {
   $('#stops-empty').hidden = stops.length > 0;
   document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-checked', b.dataset.profile === state.route.profile));
   $('#keep-end').checked = state.route.keepEnd;
+  renderRouteOptions();
 
   const items = [];
   stops.forEach((p, i) => {
@@ -309,6 +410,7 @@ function renderStops() {
       h('button', { class: 'main', type: 'button', onclick: () => focusPlace(p) },
         h('div', { class: 'title' }, p.name),
         h('div', { class: 'sub' }, i === 0 ? 'Start' : i === stops.length - 1 ? 'Destination' : p.address || p.category),
+        p.provenance && h('div', { class: 'prov' }, `${PROV_ICON[p.provenance.kind] || '📍'} ${p.provenance.by || p.provenance.via || ''}`),
         // Itinerary: the days spent at this stop and what to do there (route.plan, keyed by place id).
         state.route.plan?.[p.id] && h('div', { class: 'plan' },
           h('span', { class: 'days' }, `${/\D/.test(state.route.plan[p.id].days) ? 'Days' : 'Day'} ${state.route.plan[p.id].days.replace('-', '–')}`),
@@ -341,6 +443,32 @@ function renderStops() {
   $('#btn-gmaps').toggleAttribute('hidden', !ok);
   if (ok) $('#btn-gmaps').href = googleMapsUrl(stops, state.route.profile);
 }
+
+// The active route and its saved alternatives (state.routeOptions).
+function renderRouteOptions() {
+  const active = routeName();
+  $('#route-option').replaceChildren(...routeNames().map(n => h('option', { value: n, selected: n === active }, n)));
+  $('#route-option').value = active;
+  $('#btn-opt-delete').disabled = !Object.keys(state.routeOptions).length;
+  $('#route-summary').textContent = state.route.summary || '';
+  $('#route-summary').hidden = !state.route.summary;
+}
+$('#route-option').onchange = e => {
+  try { switchRoute(e.target.value); fitAll(); }
+  catch (err) { toast(`Couldn’t switch route: ${err.message}`); renderRouteOptions(); }
+};
+$('#btn-opt-save').onclick = () => {
+  const name = prompt('Name for the new route option (the current route stays active):');
+  if (name == null) return;
+  try { saveRouteAs(name); toast(`Saved route option “${name.trim()}”`); }
+  catch (err) { toast(`Couldn’t save: ${err.message}`); }
+};
+$('#btn-opt-delete').onclick = () => {
+  if (!Object.keys(state.routeOptions).length) return toast('This is the only route');
+  if (!confirm(`Delete the route option “${routeName()}”? Your places stay saved.`)) return;
+  try { const gone = deleteRoute(); fitAll(); toast(`Deleted “${gone}”, now on “${routeName()}”`); }
+  catch (err) { toast(`Couldn’t delete: ${err.message}`); }
+};
 
 function moveStop(from, to) {
   const s = state.route.stops;
@@ -520,6 +648,7 @@ function openEdit(id) {
   const src = p.source || {};
   $('#edit-source').replaceChildren(
     p.info ? h('span', { class: 'edit-info' }, p.info) : null,
+    provLine(p, { prefix: 'Suggested', withNote: true }),
     `Saved ${new Date(p.createdAt).toLocaleDateString()} via ${src.type || 'search'}`,
     linkList(p));
   $('#edit-route').textContent = state.route.stops.includes(id) ? 'Remove from route' : 'Add to route';
@@ -687,6 +816,7 @@ async function handleIncoming({ title = '', text = '', url = '', files = [] }, t
     const meta = await api.oembed(p.source.url);
     if (meta) {
       p.source.title = meta.title || p.source.title;
+      if (meta.author) p.source.by = meta.author; // the account that posted it, for provenance
       p.thumb = p.thumb || meta.thumb;
       p.caption = [p.caption, meta.title].filter(Boolean).join(' · ');
       p.queries = [...new Set([...p.queries, ...placeCandidates(meta.title)])];

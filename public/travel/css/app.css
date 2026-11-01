@@ -1,34 +1,45 @@
+/* One accent (blue) for everything you act on or follow: buttons, the selected tab,
+   the route and its letters, links. Amber only marks tips, so they stand apart from
+   reference text. Slate neutrals. Text pairs meet WCAG AA in both themes. */
 :root {
   --bg: #ffffff;
-  --bg-2: #f3f5f7;
-  --fg: #14181f;
-  --muted: #4b5563;
-  --line: #dfe3e8;
-  --accent: #0f766e;
+  --bg-2: #f1f5f9;
+  --fg: #0f172a;
+  --muted: #475569;
+  --line: #e2e8f0;
+  --accent: #1d4ed8;
   --accent-fg: #ffffff;
-  --danger: #b42318;
+  --accent-soft: #dbeafe;
+  --danger: #b91c1c;
   --route: #2563eb;
   /* Route letters (badges and pins) carry white text: keep this dark enough in both themes. */
   --route-badge: #1d4ed8;
   --link: #1d4ed8;
-  --shadow: 0 6px 24px rgb(0 0 0 / .14);
+  --tip-bg: #fef3c7;
+  --tip-line: #d97706;
+  --pin-rim: #334155;
+  --shadow: 0 6px 24px rgb(15 23 42 / .14);
   --radius: 14px;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #171b21;
-    --bg-2: #222831;
-    --fg: #e8ecf1;
-    --muted: #b9c3d0;
-    --line: #3a4350;
-    --accent: #2dd4bf;
-    --accent-fg: #062c28;
-    --danger: #f97066;
+    --bg: #0f172a;
+    --bg-2: #1e293b;
+    --fg: #f1f5f9;
+    --muted: #cbd5e1;
+    --line: #334155;
+    --accent: #3b82f6;
+    --accent-fg: #ffffff;
+    --accent-soft: #1e3a8a;
+    --danger: #f87171;
     --route: #60a5fa;
     --route-badge: #2563eb;
-    --link: #8cc4ff;
-    --shadow: 0 6px 24px rgb(0 0 0 / .5);
+    --link: #93c5fd;
+    --tip-bg: #422006;
+    --tip-line: #f59e0b;
+    --pin-rim: #0f172a;
+    --shadow: 0 6px 24px rgb(0 0 0 / .55);
     color-scheme: dark;
   }
   .leaflet-tile-pane { filter: brightness(.8) contrast(1.1) saturate(.8); }
@@ -132,7 +143,7 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
 
 .tabs { display: flex; gap: 6px; margin-bottom: 8px; }
 .tabs button { flex: 1; justify-content: center; border-radius: 10px; }
-.tabs button[aria-selected="true"] { background: var(--bg-2); font-weight: 600; border-color: var(--fg); }
+.tabs button[aria-selected="true"] { background: var(--accent-soft); font-weight: 700; border-color: var(--accent); }
 .badge { font-size: 12px; background: var(--bg-2); border-radius: 999px; padding: 0 7px; color: var(--muted); }
 .tab { overflow: auto; flex: 1; min-height: 0; padding-bottom: 8px; }
 
@@ -155,6 +166,13 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
 .list .plan { font-size: 13px; line-height: 1.35; margin-top: 3px; white-space: normal; }
 .list .plan .days { font-weight: 600; white-space: nowrap; }
 .list.compact > li { padding: 6px 2px; }
+/* Places list: the main column is a div holding the open button and the provenance line. */
+.list .main > .open { display: block; width: 100%; border: 0; background: none; padding: 0; text-align: left; border-radius: 0; }
+/* Provenance: who suggested a place and where, one line like .sub. */
+.prov { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prov a { color: var(--link); }
+.pop .prov, #edit-source .prov { white-space: normal; margin-top: 2px; }
+#edit-source .prov { color: var(--fg); margin-bottom: 4px; }
 .thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex: none; background: var(--bg-2); display: grid; place-items: center; font-size: 20px; }
 .thumb-lg { width: 100%; max-height: 180px; object-fit: cover; border-radius: 10px; }
 .in-route { color: var(--accent); font-weight: 600; }
@@ -181,6 +199,12 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
 .stops .tools button:hover:not(:disabled) { background: var(--bg-2); }
 .stops .tools button:disabled { opacity: .3; }
 
+/* Route options: the active route and its saved alternatives. */
+.opt-row { flex-wrap: wrap; margin-top: 0; padding-right: 8px; } /* clear of the overlay scrollbar */
+.opt-row select { flex: 1 1 120px; width: auto; min-width: 0; min-height: 36px; background: var(--bg-2); }
+.opt-row button { min-height: 36px; font-size: 13px; }
+.opt-row button:disabled { opacity: .4; cursor: default; }
+.opt-summary { color: var(--muted); font-size: 13px; margin: -4px 0 8px; }
 .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .seg button { flex: 1; border: 0; border-radius: 0; justify-content: center; }
 .seg button[aria-checked="true"] { background: var(--accent); color: var(--accent-fg); }
@@ -231,7 +255,7 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
   width: 30px; height: 30px; border-radius: 50% 50% 50% 0;
   transform: rotate(-45deg);
   /* Always light with a dark rim: the map stays light in dark mode, so a dark pin disappears on it. */
-  background: #fff; border: 2px solid #0f766e;
+  background: #fff; border: 2px solid var(--pin-rim);
   display: grid; place-items: center; box-shadow: 0 2px 6px rgb(0 0 0 / .35);
 }
 .pin > span { transform: rotate(45deg); font-size: 15px; line-height: 1; }
@@ -251,7 +275,19 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden;
 }
 .pop-info.open { display: block; -webkit-line-clamp: unset; line-clamp: none; }
-.pop-tip { margin: 6px 0 0; font-size: 13px; padding: 6px 8px; border-radius: 6px; background: var(--bg-2); border-left: 3px solid var(--accent); }
+.pop-tip { margin: 6px 0 0; font-size: 13px; padding: 6px 8px; border-radius: 6px; background: var(--tip-bg); border-left: 3px solid var(--tip-line); }
+/* A marker being moved: lifted and pulsing, so it is clear which one is unlocked. */
+.leaflet-marker-icon.moving .pin { box-shadow: 0 0 0 4px var(--accent), 0 6px 14px rgb(0 0 0 / .4); animation: pin-pulse 1.2s ease-in-out infinite; }
+@keyframes pin-pulse { 50% { box-shadow: 0 0 0 9px rgb(59 130 246 / .35), 0 6px 14px rgb(0 0 0 / .4); } }
+.move-bar {
+  position: fixed; z-index: 2100; left: 50%; transform: translateX(-50%);
+  top: calc(66px + env(safe-area-inset-top));
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+  background: var(--bg); color: var(--fg); border: 2px solid var(--accent);
+  padding: 8px 10px 8px 14px; border-radius: 14px; box-shadow: var(--shadow);
+  max-width: calc(100vw - 24px); font-weight: 600;
+}
+.move-bar button { min-height: 36px; }
 .links { list-style: none; margin: 6px 0 0; padding: 0; font-size: 13px; }
 .links li { margin: 2px 0; }
 .links a, .edit-info a, .leaflet-popup-content a { color: var(--link); }
