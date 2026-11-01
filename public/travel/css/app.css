@@ -298,6 +298,21 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
   border-radius: 11px; background: #1d4ed8; color: #fff; border: 2px solid #fff;
   font: 700 12px/18px system-ui, sans-serif; text-align: center; box-shadow: 0 1px 4px rgb(0 0 0 / .4);
 }
+/* Nights at a stop (bottom-left of its marker) and an overnight ride on the route line. */
+.mk .zz {
+  position: absolute; bottom: -8px; left: -14px; padding: 0 5px; height: 20px; border-radius: 10px;
+  background: #312e81; color: #fff; border: 2px solid #fff; font: 700 11px/16px system-ui, sans-serif;
+  font-style: normal; white-space: nowrap; box-shadow: 0 1px 4px rgb(0 0 0 / .4);
+}
+.sleep-leg {
+  display: grid; place-items: center; width: 48px; height: 30px; border-radius: 15px;
+  background: #312e81; border: 2px solid #fff; font-size: 15px; box-shadow: 0 2px 6px rgb(0 0 0 / .45);
+}
+.list .sleep { font-size: 13px; margin-top: 3px; font-weight: 600; color: var(--fg); }
+.sleep-leg-chip {
+  display: inline-block; margin-right: 6px; padding: 1px 8px; border-radius: 999px;
+  background: #312e81; color: #fff; font-weight: 600;
+}
 .leaflet-marker-icon:hover .mk { transform: scale(1.12); z-index: 1; }
 .far .mk { transform: scale(.72); }
 .far .leaflet-marker-icon:hover .mk { transform: scale(.9); }
@@ -326,3 +341,58 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
 .leaflet-control-layers { color: #14181f; }
 @media (min-width: 900px) { .leaflet-top.leaflet-left { left: 404px; top: 0; } }
 @media (max-width: 899px) { .leaflet-top.leaflet-left { display: none; } }
+
+/* Schedule: one column per trip day, time down the side. Sticky day header and time column. */
+#tab-schedule:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+.sched-legend:not([hidden]) { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.sched-legend .sk { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; border-left: 4px solid var(--k-rim); background: var(--k-bg); color: var(--k-fg); }
+.sched {
+  --col: 150px; --tcol: 46px;
+  flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain;
+  border: 1px solid var(--line); border-radius: 10px;
+  scroll-snap-type: x mandatory; scroll-padding-left: var(--tcol);
+}
+.sched-grid {
+  display: grid; width: max-content;
+  grid-template-columns: var(--tcol) repeat(var(--days), var(--col));
+  grid-template-rows: auto calc(var(--hours) * 44px);
+}
+.sd-corner, .sd-head { position: sticky; top: 0; z-index: 3; background: var(--bg); border-bottom: 1px solid var(--line); }
+.sd-corner { grid-row: 1; grid-column: 1; left: 0; z-index: 4; }
+.sd-head {
+  grid-row: 1; scroll-snap-align: start; padding: 6px 8px; font-size: 13px; line-height: 1.3;
+  border-left: 1px solid var(--line);
+}
+.sd-times { grid-row: 2; grid-column: 1; position: sticky; left: 0; z-index: 2; background: var(--bg); border-right: 1px solid var(--line); }
+.sd-times span { position: absolute; right: 6px; transform: translateY(-50%); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sd-times span:first-child { transform: none; }
+.sd-col {
+  grid-row: 2; position: relative; border-left: 1px solid var(--line);
+  background: repeating-linear-gradient(to bottom, transparent 0 43px, var(--line) 43px 44px);
+}
+.sb {
+  position: absolute; left: 3px; right: 3px; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-start; align-items: stretch; gap: 1px;
+  white-space: normal; text-align: left; padding: 3px 6px; border: 0; border-left: 4px solid var(--k-rim); border-radius: 6px;
+  background: var(--k-bg); color: var(--k-fg); font-size: 12px; line-height: 1.25; min-height: 0;
+}
+.sb:hover { background: var(--k-bg); filter: brightness(.96); }
+.sb b { font-weight: 600; overflow-wrap: anywhere; }
+.sb span { font-size: 11px; opacity: .85; font-variant-numeric: tabular-nums; }
+.k-travel { --k-bg: #c7d2fe; --k-fg: #1e1b4b; --k-rim: #4f46e5; }
+.k-sight  { --k-bg: #dbeafe; --k-fg: #172554; --k-rim: #2563eb; }
+.k-nature { --k-bg: #dcfce7; --k-fg: #052e16; --k-rim: #16a34a; }
+.k-food   { --k-bg: #fef3c7; --k-fg: #451a03; --k-rim: #d97706; }
+.k-rest   { --k-bg: #e2e8f0; --k-fg: #0f172a; --k-rim: #64748b; }
+@media (prefers-color-scheme: dark) {
+  .k-travel { --k-bg: #3730a3; --k-fg: #fff; --k-rim: #a5b4fc; }
+  .k-sight  { --k-bg: #1e40af; --k-fg: #fff; --k-rim: #93c5fd; }
+  .k-nature { --k-bg: #166534; --k-fg: #fff; --k-rim: #86efac; }
+  .k-food   { --k-bg: #92400e; --k-fg: #fff; --k-rim: #fcd34d; }
+  .k-rest   { --k-bg: #475569; --k-fg: #fff; --k-rim: #cbd5e1; }
+  .sb:hover { filter: brightness(1.12); }
+}
+@media (min-width: 900px) {
+  .sched { --col: 190px; scroll-snap-type: none; }
+  .panel.wide, .panel.wide[data-size] { width: min(980px, calc(100vw - 32px)); }
+}
