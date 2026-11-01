@@ -44,8 +44,9 @@ const BASEMAPS = {
   'Streets (OpenStreetMap)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: OSM_ATTR,
   }),
-  'Voyager (CARTO)': L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    maxZoom: 20, subdomains: 'abcd', attribution: `${OSM_ATTR} &copy; <a href="https://carto.com/attributions">CARTO</a>`,
+  // CARTO's basemaps now need an API key (tiles come back stamped "API KEY REQUIRED"); Esri's street map does not.
+  'Streets (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19, attribution: 'Tiles &copy; Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS User Community',
   }),
   'Satellite (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19, attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community',
@@ -62,15 +63,15 @@ L.control.layers(BASEMAPS, null, { position: 'topright' }).addTo(map);
 map.on('baselayerchange', e => { try { localStorage.setItem(BASEMAP_KEY, e.name); } catch { /* ignore */ } });
 
 // OSM's tile servers refuse requests without a Referer (e.g. a page opened from file://)
-// and throttle heavy users; if most tiles fail, fall back to CARTO's OSM-based tiles.
+// and throttle heavy users; if most tiles fail, fall back to Esri's street map.
 const osm = BASEMAPS['Streets (OpenStreetMap)'];
 let tileOk = 0, tileBad = 0;
 osm.on('tileload', () => { tileOk++; });
 osm.on('tileerror', () => {
   if (++tileBad < 4 || tileOk > tileBad || !map.hasLayer(osm)) return;
   map.removeLayer(osm);
-  BASEMAPS['Voyager (CARTO)'].addTo(map);
-  toast('OpenStreetMap tiles unavailable — switched to CARTO');
+  BASEMAPS['Streets (Esri)'].addTo(map);
+  toast('OpenStreetMap tiles unavailable — switched to Esri');
 });
 
 const markers = new Map();
@@ -85,11 +86,30 @@ function pinIcon(p) {
   return L.divIcon({ className: '', html: `<div class="${cls}"><span>${inner}</span></div>`, iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] });
 }
 
+// Links a place carries: [{title, url}] (sources: Wikipedia, the photo, the reel,
+// who suggested it), else just its original post.
+function linksOf(p) {
+  if (Array.isArray(p.links) && p.links.length) return p.links;
+  return p.source?.url ? [{ title: p.source.title || 'Original post', url: p.source.url }] : [];
+}
+const linkList = p => {
+  const links = linksOf(p);
+  return links.length ? h('ul', { class: 'links' }, ...links.map(l =>
+    h('li', {}, h('a', { href: l.url, target: '_blank', rel: 'noopener' }, l.title)))) : null;
+};
+
 function popupFor(p) {
   const inRoute = state.route.stops.includes(p.id);
-  return h('div', {},
+  const plan = state.route.plan?.[p.id];
+  return h('div', { class: 'pop' },
+    p.thumb && h('img', { class: 'pop-img', src: p.thumb, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }),
     h('b', {}, p.name),
     p.address && h('div', { class: 'muted small' }, p.address),
+    plan && h('div', { class: 'pop-plan' }, h('strong', {}, `${/\D/.test(plan.days) ? 'Days' : 'Day'} ${plan.days.replace('-', '–')}: `), plan.what),
+    // Clamped to a few lines so the tip, sources and buttons stay in view; tap to read it all.
+    p.info && h('p', { class: 'pop-info', title: 'Tap to read more', onclick: e => e.currentTarget.classList.toggle('open') }, p.info),
+    p.notes && h('p', { class: 'pop-tip' }, p.notes),
+    linkList(p),
     h('div', { class: 'row' },
       h('button', { type: 'button', onclick: () => openEdit(p.id) }, 'Edit'),
       h('button', { type: 'button', onclick: () => { toggleStop(p.id); map.closePopup(); } }, inRoute ? 'Remove from route' : 'Add to route')));
@@ -111,7 +131,11 @@ function renderMarkers() {
     }
     m.setLatLng([p.lat, p.lng]);
     m.setIcon(pinIcon(p));
-    m.bindPopup(() => popupFor(byId(p.id)));
+    // Keep popups clear of the search bar (top) and, on phones, of the shrunk bottom panel.
+    m.bindPopup(() => popupFor(byId(p.id)), {
+      minWidth: 240, maxWidth: 300, maxHeight: Math.min(innerHeight - (innerWidth < 900 ? 230 : 110), 560),
+      autoPanPaddingTopLeft: [12, 76], autoPanPaddingBottomRight: [12, innerWidth < 900 ? 150 : 12],
+    });
   }
   for (const [id, m] of markers) if (!seen.has(id)) { m.remove(); markers.delete(id); }
 }
@@ -135,6 +159,12 @@ function fitAll() {
 /* ---------------- Panel ---------------- */
 
 function setPanel(size) { $('#panel').dataset.size = size; setTimeout(() => map.invalidateSize(), 250); }
+// On a phone the bottom panel covers half the map: shrink it while a place's popup is open.
+map.on('popupopen', e => {
+  if (innerWidth >= 900 || $('#panel').dataset.size === 'min') return;
+  setPanel('min');
+  setTimeout(() => e.popup.isOpen() && e.popup.update(), 320); // re-pan into the space the panel freed
+});
 $('#grab').onclick = () => {
   const order = ['min', 'half', 'full'];
   setPanel(order[(order.indexOf($('#panel').dataset.size) + 1) % 3]);
@@ -415,8 +445,9 @@ function openEdit(id) {
   if (p.thumb) $('#edit-thumb').src = p.thumb;
   const src = p.source || {};
   $('#edit-source').replaceChildren(
+    p.info ? h('span', { class: 'edit-info' }, p.info) : null,
     `Saved ${new Date(p.createdAt).toLocaleDateString()} via ${src.type || 'search'}`,
-    src.url ? h('span', {}, ' · ', h('a', { href: src.url, target: '_blank', rel: 'noopener' }, src.title || 'original post')) : null);
+    linkList(p));
   $('#edit-route').textContent = state.route.stops.includes(id) ? 'Remove from route' : 'Add to route';
   $('#dlg-edit').showModal();
 }

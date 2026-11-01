@@ -2,12 +2,15 @@
   --bg: #ffffff;
   --bg-2: #f3f5f7;
   --fg: #14181f;
-  --muted: #5f6b7a;
+  --muted: #4b5563;
   --line: #dfe3e8;
   --accent: #0f766e;
   --accent-fg: #ffffff;
   --danger: #b42318;
   --route: #2563eb;
+  /* Route letters (badges and pins) carry white text: keep this dark enough in both themes. */
+  --route-badge: #1d4ed8;
+  --link: #1d4ed8;
   --shadow: 0 6px 24px rgb(0 0 0 / .14);
   --radius: 14px;
   color-scheme: light;
@@ -17,12 +20,14 @@
     --bg: #171b21;
     --bg-2: #222831;
     --fg: #e8ecf1;
-    --muted: #9aa5b4;
-    --line: #333b46;
+    --muted: #b9c3d0;
+    --line: #3a4350;
     --accent: #2dd4bf;
     --accent-fg: #062c28;
     --danger: #f97066;
     --route: #60a5fa;
+    --route-badge: #2563eb;
+    --link: #8cc4ff;
     --shadow: 0 6px 24px rgb(0 0 0 / .5);
     color-scheme: dark;
   }
@@ -160,11 +165,18 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
 .letter {
   width: 26px; height: 26px; border-radius: 50%; flex: none;
   display: grid; place-items: center;
-  background: var(--route); color: #fff; font-weight: 700; font-size: 13px;
+  background: var(--route-badge); color: #fff; font-weight: 700; font-size: 14px;
 }
 .leg { font-size: 12px; color: var(--muted); padding: 0 0 0 40px; border: 0 !important; }
-.stops .tools { display: flex; }
-.stops .tools button { border: 0; background: none; padding: 4px 6px; }
+.stops .tools { display: flex; gap: 2px; }
+/* Big enough to see and to hit with a thumb (36px), in the text colour rather than faint. */
+.stops .tools button {
+  border: 0; background: none; color: var(--fg);
+  min-width: 36px; min-height: 36px; padding: 0; border-radius: 8px;
+  font-size: 18px; justify-content: center;
+}
+.stops .tools button:hover:not(:disabled) { background: var(--bg-2); }
+.stops .tools button:disabled { opacity: .3; }
 
 .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .seg button { flex: 1; border: 0; border-radius: 0; justify-content: center; }
@@ -215,16 +227,32 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
 .pin {
   width: 30px; height: 30px; border-radius: 50% 50% 50% 0;
   transform: rotate(-45deg);
-  background: var(--bg); border: 2px solid var(--accent);
-  display: grid; place-items: center; box-shadow: 0 2px 6px rgb(0 0 0 / .3);
+  /* Always light with a dark rim: the map stays light in dark mode, so a dark pin disappears on it. */
+  background: #fff; border: 2px solid #0f766e;
+  display: grid; place-items: center; box-shadow: 0 2px 6px rgb(0 0 0 / .35);
 }
 .pin > span { transform: rotate(45deg); font-size: 15px; line-height: 1; }
-.pin.stop { background: var(--route); border-color: #fff; color: #fff; font-weight: 700; font-size: 13px; }
+.pin.stop { background: var(--route-badge); border-color: #fff; color: #fff; font-weight: 700; font-size: 14px; }
 .pin.suggest { border-color: #f59e0b; width: 24px; height: 24px; }
-.leaflet-popup-content { margin: 10px 12px; }
-.leaflet-popup-content b { display: block; margin-bottom: 2px; }
-.leaflet-popup-content .row { margin: 6px 0 0; }
-.leaflet-popup-content button { padding: 4px 9px; font-size: 13px; }
+/* Popups follow the theme (Leaflet's own are always white, which hid light text in dark mode). */
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg); color: var(--fg); }
+.leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
+.leaflet-popup-content { margin: 10px 12px; font-size: 14px; line-height: 1.4; }
+.leaflet-popup-content b { display: block; margin-bottom: 2px; font-size: 15px; }
+.leaflet-popup-content .row { margin: 8px 0 0; display: flex; gap: 6px; flex-wrap: wrap; }
+.leaflet-popup-content button { padding: 6px 10px; font-size: 13px; }
+.pop-img { display: block; width: 100%; height: 140px; object-fit: cover; border-radius: 8px; margin-bottom: 8px; background: var(--bg-2); }
+.pop-plan { margin: 6px 0 0; font-size: 13px; }
+.pop-info {
+  margin: 6px 0 0; font-size: 13px; cursor: pointer;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden;
+}
+.pop-info.open { display: block; -webkit-line-clamp: unset; line-clamp: none; }
+.pop-tip { margin: 6px 0 0; font-size: 13px; padding: 6px 8px; border-radius: 6px; background: var(--bg-2); border-left: 3px solid var(--accent); }
+.links { list-style: none; margin: 6px 0 0; padding: 0; font-size: 13px; }
+.links li { margin: 2px 0; }
+.links a, .edit-info a, .leaflet-popup-content a { color: var(--link); }
+.edit-info { display: block; color: var(--fg); margin-bottom: 6px; line-height: 1.4; }
 .leaflet-container { font: inherit; }
 .leaflet-top.leaflet-left { top: 64px; }
 .leaflet-top.leaflet-right { top: calc(60px + env(safe-area-inset-top)); }
