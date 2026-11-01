@@ -167,7 +167,10 @@ label > input, label > textarea { margin-top: 4px; color: var(--fg); font-size: 
   display: grid; place-items: center;
   background: var(--route-badge); color: #fff; font-weight: 700; font-size: 14px;
 }
-.leg { font-size: 12px; color: var(--muted); padding: 0 0 0 40px; border: 0 !important; }
+.leg { font-size: 13px; color: var(--muted); padding: 2px 0 6px 40px; border: 0 !important; }
+.leg a { color: var(--link); font-weight: 600; white-space: nowrap; }
+/* Layer switcher: overlays listed under the basemaps; keep it readable in dark mode. */
+.leaflet-control-layers-overlays { font-size: 13px; }
 .stops .tools { display: flex; gap: 2px; }
 /* Big enough to see and to hit with a thumb (36px), in the text colour rather than faint. */
 .stops .tools button {

@@ -13,8 +13,10 @@ const OVERPASS = 'https://overpass-api.de/api/interpreter';
 async function getJson(url, opts = {}) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), opts.timeout || 15000);
+  // The caller's signal cancels; the timeout still applies alongside it.
+  const signal = opts.signal ? AbortSignal.any([opts.signal, ctrl.signal]) : ctrl.signal;
   try {
-    const r = await fetch(url, { ...opts, signal: opts.signal || ctrl.signal });
+    const r = await fetch(url, { ...opts, signal });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
     return await r.json();
   } finally { clearTimeout(t); }
@@ -130,6 +132,69 @@ export const POI_TYPES = {
   supermarket: ['shop', 'supermarket', 'Groceries'],
   park: ['leisure', 'park', 'Parks'],
 };
+
+// Public Overpass servers are often overloaded (502/504, or minute-long waits): try a
+// second one before giving up on them.
+const OVERPASS_MIRRORS = [OVERPASS, 'https://overpass.kumi.systems/api/interpreter'];
+
+// Train stations and bus stations inside a map bounding box (south, west, north, east).
+// Metro, tram and light-rail stops are left out: this is for getting between cities.
+// Returns { stations, partial }: partial when Overpass was unreachable and the list came
+// from Nominatim's search, which caps each query at 40 results.
+export async function stationsIn(box, { signal } = {}) {
+  const failures = [];
+  for (const url of OVERPASS_MIRRORS) {
+    try {
+      return { stations: await overpassStations(url, box, signal), partial: false };
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      failures.push(`${new URL(url).host}: ${err.message || err.name}`);
+    }
+  }
+  try {
+    return { stations: await nominatimStations(box, signal), partial: true };
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    throw new Error(`${failures.join('; ')}; Nominatim: ${err.message}`);
+  }
+}
+
+async function nominatimStations([s, w, n, e], signal) {
+  const found = [];
+  for (const [q, kind] of [['railway station', 'rail'], ['bus station', 'bus']]) {
+    const u = new URL(`${NOMINATIM}/search`);
+    for (const [k, v] of Object.entries({ q, format: 'jsonv2', limit: 40, bounded: 1, extratags: 1, 'accept-language': 'en',
+      viewbox: [w, n, e, s].map(x => x.toFixed(4)).join(',') })) u.searchParams.set(k, v);
+    for (const r of await getJson(u, { signal })) {
+      const t = r.extratags || {};
+      // Nominatim's "railway station" also returns metro stops: keep mainline ones.
+      if (kind === 'rail' && (r.type !== 'station' || /subway|light_rail|monorail|tram/.test(t.station || '') || t.subway === 'yes')) continue;
+      if (kind === 'bus' && r.type !== 'bus_station') continue;
+      found.push({ name: r.name || (kind === 'bus' ? 'Bus station' : 'Station'), local: '', kind,
+        lat: +r.lat, lng: +r.lon, osm: `${r.osm_type}/${r.osm_id}` });
+    }
+  }
+  return found;
+}
+
+async function overpassStations(url, [s, w, n, e], signal) {
+  const bb = [s, w, n, e].map(x => x.toFixed(4)).join(',');
+  const q = `[out:json][timeout:12];(
+    nwr["railway"="station"]["station"!~"subway|light_rail|monorail|tram"](${bb});
+    nwr["amenity"="bus_station"](${bb});
+  );out center 300;`;
+  const j = await getJson(url, { method: 'POST', body: new URLSearchParams({ data: q }), timeout: 12000, signal });
+  return j.elements
+    .map(e => ({
+      name: e.tags?.['name:en'] || e.tags?.name || (e.tags?.amenity === 'bus_station' ? 'Bus station' : 'Station'),
+      local: e.tags?.['name:en'] && e.tags?.name !== e.tags['name:en'] ? e.tags.name : '',
+      kind: e.tags?.amenity === 'bus_station' ? 'bus' : 'rail',
+      lat: e.lat ?? e.center?.lat,
+      lng: e.lon ?? e.center?.lon,
+      osm: `${e.type}/${e.id}`,
+    }))
+    .filter(p => Number.isFinite(p.lat));
+}
 
 // POIs within `radius` metres of a polyline.
 export async function poisAlong(line, type, radius = 400) {

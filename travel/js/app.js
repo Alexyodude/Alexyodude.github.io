@@ -59,8 +59,75 @@ const BASEMAP_KEY = 'wayfinder:basemap';
 let basemapName = 'Streets (OpenStreetMap)';
 try { if (BASEMAPS[localStorage.getItem(BASEMAP_KEY)]) basemapName = localStorage.getItem(BASEMAP_KEY); } catch { /* private mode */ }
 BASEMAPS[basemapName].addTo(map);
-L.control.layers(BASEMAPS, null, { position: 'topright' }).addTo(map);
 map.on('baselayerchange', e => { try { localStorage.setItem(BASEMAP_KEY, e.name); } catch { /* ignore */ } });
+
+/* Transport overlays: railways from OpenRailwayMap (keyless, OSM-based tiles), and
+   train / bus stations from OpenStreetMap via Overpass, for the area in view. */
+const ORM_ATTR = `${OSM_ATTR}, style &copy; <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>`;
+const stationLayer = L.layerGroup();
+const OVERLAYS = {
+  'Railways (red = high-speed)': L.tileLayer('https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png', {
+    maxZoom: 19, subdomains: 'abc', opacity: .85, attribution: ORM_ATTR,
+  }),
+  'Rail top speeds': L.tileLayer('https://{s}.tiles.openrailwaymap.org/maxspeed/{z}/{x}/{y}.png', {
+    maxZoom: 19, subdomains: 'abc', opacity: .85, attribution: ORM_ATTR,
+  }),
+  'Train & bus stations': stationLayer,
+};
+const OVERLAY_HINT = {
+  'Railways (red = high-speed)': 'Railways: red = high-speed, orange = main line, yellow = branch line',
+  'Rail top speeds': 'Rail top speeds: blue is slow, through green and red, to purple at 300+ km/h',
+  'Train & bus stations': 'Stations: purple = train, orange = bus. Zoom in to a city to load them.',
+};
+const OVERLAY_KEY = 'wayfinder:overlays';
+try {
+  for (const name of JSON.parse(localStorage.getItem(OVERLAY_KEY)) || []) OVERLAYS[name]?.addTo(map);
+} catch { /* none saved */ }
+L.control.layers(BASEMAPS, OVERLAYS, { position: 'topright' }).addTo(map);
+const saveOverlays = () => {
+  try { localStorage.setItem(OVERLAY_KEY, JSON.stringify(Object.keys(OVERLAYS).filter(n => map.hasLayer(OVERLAYS[n])))); } catch { /* ignore */ }
+};
+map.on('overlayadd', e => { saveOverlays(); toast(OVERLAY_HINT[e.name] || e.name, 5000); if (e.layer === stationLayer) loadStations(); });
+map.on('overlayremove', saveOverlays);
+
+// Stations are fetched per view; below zoom 9 a view holds too many to be useful.
+const STATION_MIN_ZOOM = 9;
+let stationCtl = null, stationKey = '';
+async function loadStations() {
+  if (!map.hasLayer(stationLayer)) return;
+  if (map.getZoom() < STATION_MIN_ZOOM) { stationLayer.clearLayers(); stationKey = ''; return; }
+  const b = map.getBounds().pad(.15);
+  const key = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(x => x.toFixed(2)).join();
+  if (key === stationKey) return;
+  stationCtl?.abort();
+  stationCtl = new AbortController();
+  toast('Loading stations…', 30000);
+  try {
+    const { stations: found, partial } = await api.stationsIn([b.getSouth(), b.getWest(), b.getNorth(), b.getEast()], { signal: stationCtl.signal });
+    stationKey = key;
+    toast(found.length ? `${found.length} stations${partial ? ' (partial list: the full station map is busy)' : ''}` : 'No train or bus stations mapped here');
+    stationLayer.clearLayers();
+    for (const s of found) {
+      L.circleMarker([s.lat, s.lng], {
+        radius: 7, weight: 2, color: '#fff', fillOpacity: 1,
+        fillColor: s.kind === 'bus' ? '#ea580c' : '#7c3aed',
+      }).bindPopup(() => h('div', { class: 'pop' },
+        h('b', {}, `${s.kind === 'bus' ? '🚌' : '🚆'} ${s.name}`),
+        s.local && h('div', { class: 'muted small' }, s.local),
+        h('div', { class: 'row' },
+          h('a', { href: `https://www.openstreetmap.org/${s.osm}`, target: '_blank', rel: 'noopener' }, 'OpenStreetMap'),
+          h('button', { type: 'button', onclick: () => {
+            addPlace({ name: s.name, lat: s.lat, lng: s.lng, address: s.local, category: s.kind === 'bus' ? 'bus station' : 'train station',
+              source: { type: 'search', url: `https://www.openstreetmap.org/${s.osm}` } });
+            map.closePopup(); toast(`Saved “${s.name}”`);
+          } }, 'Save place')))).addTo(stationLayer);
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') toast(`Couldn't load stations (${err.message})`);
+  }
+}
+let stationTimer = null;
+map.on('moveend', () => { clearTimeout(stationTimer); stationTimer = setTimeout(loadStations, 600); });
 
 // OSM's tile servers refuse requests without a Referer (e.g. a page opened from file://)
 // and throttle heavy users; if most tiles fail, fall back to Esri's street map.
@@ -258,7 +325,14 @@ function renderStops() {
     li.addEventListener('drop', e => { e.preventDefault(); li.classList.remove('drop-above'); if (dragFrom != null) moveStop(dragFrom, i); dragFrom = null; });
     items.push(li);
     const leg = lastRoute?.legs?.[i];
-    if (leg && i < stops.length - 1) items.push(h('li', { class: 'leg' }, `↓ ${fmtDistance(leg.distance)} · ${fmtDuration(leg.duration)}`));
+    if (i < stops.length - 1) {
+      // Train and bus options between this stop and the next, from Rome2rio's route search.
+      const city = q => encodeURIComponent(q.name.replace(/\s*\(.*\)$/, ''));
+      items.push(h('li', { class: 'leg' },
+        leg ? `↓ ${fmtDistance(leg.distance)} · ${fmtDuration(leg.duration)} by road · ` : '↓ ',
+        h('a', { href: `https://www.rome2rio.com/map/${city(p)}/${city(stops[i + 1])}`, target: '_blank', rel: 'noopener' },
+          '🚆🚌 Find trains & buses')));
+    }
   });
   $('#stops').replaceChildren(...items);
 
