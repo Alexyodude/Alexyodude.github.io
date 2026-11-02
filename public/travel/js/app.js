@@ -668,9 +668,10 @@ async function importBackupFromHash() {
   }
   try {
     toast('Loading the trip…', 15000);
-    const r = await fetch(url, { cache: 'no-cache' });
+    const r = await fetch(fresh(url), { cache: 'no-store' });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-    const data = await r.json();
+    const text = await r.text();
+    const data = JSON.parse(text);
     if (!Array.isArray(data.places)) throw new Error('no places in the file');
     const options = Object.keys(data.routeOptions || {}).length;
     const name = data.route?.name ? `“${data.route.name}”` : 'the trip';
@@ -678,13 +679,62 @@ async function importBackupFromHash() {
       toast('Not loaded'); return true;
     }
     replaceAll(data);
+    writeSync(url.href, text);
     showTab('route');
     fitAll();
-    toast(`Loaded ${data.places.length} places${options ? ` · ${options + 1} route options` : ''}`, 4000);
+    toast(`Loaded ${data.places.length} places${options ? ` · ${options + 1} route options` : ''}. It updates itself when the shared trip changes.`, 5000);
   } catch (err) {
     toast(`Couldn't load the trip (${err.message})`, 6000);
   }
   return true;
+}
+
+// Auto-update: a trip loaded from an import link is checked again when the app opens, when it
+// comes back to the front, and every 2 minutes while open, so changes published to the gist (by
+// the trip bot) show up without tapping the link again. Edits made on this device are never
+// replaced silently: then it asks first.
+const SYNC_KEY = 'wayfinder:sync';
+const fresh = url => { const u = new URL(url); u.searchParams.set('t', Date.now()); return u; }; // GitHub caches gist files for 5 min
+const fnv = s => { let x = 0x811c9dc5; for (let i = 0; i < s.length; i++) { x ^= s.charCodeAt(i); x = Math.imul(x, 0x01000193); } return (x >>> 0).toString(36); };
+const stable = v => Array.isArray(v) ? `[${v.map(stable).join(',')}]`
+  : v && typeof v === 'object' ? `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${stable(v[k])}`).join(',')}}`
+  : JSON.stringify(v);
+// What the user can change here: places' name, position, notes, category, and every route. Not the
+// photo/info/links the Wikipedia lookup fills in by itself, and not which route option is shown.
+const userPrint = () => fnv(stable({
+  places: state.places.map(p => [p.id, p.name, p.lat, p.lng, p.notes || '', p.category || '']),
+  routes: [state.route, ...Object.values(state.routeOptions)]   // defaults as switchRoute() fills them in
+    .map(r => ({ stops: [], profile: 'car', keepEnd: true, ...r, name: r.name || 'Main' }))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+}));
+function readSync() { try { return JSON.parse(localStorage.getItem(SYNC_KEY)); } catch { return null; } }
+function writeSync(url, text, local = userPrint()) {
+  try { localStorage.setItem(SYNC_KEY, JSON.stringify({ url, remote: fnv(text), local })); } catch { /* private mode */ }
+}
+
+let syncBusy = false;
+async function checkTripUpdate() {
+  const s = readSync();
+  if (!s?.url || syncBusy || document.hidden) return;
+  syncBusy = true;
+  try {
+    const u = new URL(s.url);
+    if (u.protocol !== 'https:' || !IMPORT_HOSTS.includes(u.hostname)) return;
+    const r = await fetch(fresh(u), { cache: 'no-store' });
+    if (!r.ok) return;
+    const text = await r.text();
+    if (fnv(text) === s.remote) return;
+    const data = JSON.parse(text);
+    if (!Array.isArray(data.places)) return;
+    if (userPrint() !== s.local
+        && !confirm(`The shared trip “${data.route?.name || 'trip'}” was updated. Load it? It replaces the changes you made on this device.`)) {
+      writeSync(s.url, text, s.local);   // don't ask again for this version; still counts as changed here
+      return;
+    }
+    replaceAll(data);
+    writeSync(s.url, text);
+    toast(`Trip updated · ${data.places.length} places`, 3500);
+  } catch { /* offline or a bad file: try again next time */ } finally { syncBusy = false; }
 }
 
 function importTripFromHash() {
@@ -1151,6 +1201,9 @@ else if (navigator.geolocation) navigator.geolocation.getCurrentPosition(p => ma
 importTripFromHash();
 readShareInbox();
 window.addEventListener('hashchange', importTripFromHash);
+if (!/#import=/.test(location.hash)) checkTripUpdate();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkTripUpdate(); });
+setInterval(checkTripUpdate, 120000);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e));
